@@ -4,25 +4,27 @@ Script pentru interogarea endpointului public
 `POST https://dgpci.mai.gov.ro/drpciv-forms-api/plate-status`
 pentru toate placutele din intervalul `MS01WWW` ... `MS99WWW`.
 
-## De ce nu merge cu curl in bucla
+## De ce trebuie rulat din browserul tau
 
-Payload-ul contine `reCaptchaKey` - un token reCAPTCHA Enterprise care este:
+Payload-ul contine `reCaptchaKey` - un token reCAPTCHA Enterprise care este
+de unica folosinta, expira in ~2 minute si e legat de originea paginii lor.
+Deci un token copiat din DevTools iti da exact **un** raspuns valid; pentru 99
+de placute ai nevoie de 99 de token-uri proaspete.
 
-- **de unica folosinta** - serverul il invalideaza dupa prima verificare;
-- **cu expirare scurta** - ~2 minute;
-- **legat de origine** - generat de pagina lor, pentru domeniul lor.
-
-Deci un token copiat din DevTools iti da exact **un** raspuns valid. Pentru 99 de
-placute ai nevoie de 99 de token-uri proaspete, iar singurul mod curat de a le
-obtine este sa lasi pagina sa le genereze - adica sa rulezi din browserul tau,
-in sesiunea ta.
+Singurul mod curat de a le obtine este sa lasi pagina sa le genereze - adica sa
+rulezi din browserul tau, in sesiunea ta, de pe IP-ul tau. Un browser headless
+pornit dintr-un server nu e o varianta: reCAPTCHA Enterprise scoreaza exact
+tiparul ala drept bot, deci nici nu ar functiona.
 
 ## Utilizare
 
-1. Deschide <https://dgpci.mai.gov.ro/> si navigheaza la formularul de verificare
-   a placutei (acolo unde reCAPTCHA e deja incarcat in pagina).
-2. F12 -> tab-ul **Console**.
-3. Lipeste continutul din [`browser-console.js`](browser-console.js) si Enter.
+1. Deschide <https://dgpci.mai.gov.ro/> si navigheaza la formularul de
+   verificare a placutei.
+2. F12 -> tab-ul **Console**. Lipeste continutul din
+   [`browser-console.js`](browser-console.js) si Enter.
+3. **Verifica o singura placuta manual, din formular.** Scriptul intercepteaza
+   apelul paginii catre `grecaptcha.execute` si retine singur site key-ul si
+   actiunea - nu mai trebuie sa cauti nimic prin bundle.
 4. Porneste:
 
    ```js
@@ -36,12 +38,31 @@ in sesiunea ta.
    ```
 
 Ruleaza secvential, cu 2.5s pauza intre cereri - deci ~4-5 minute pentru toate
-cele 99. Nu lasa tabul in background prea agresiv (unele browsere throttle-uiesc
-timerele); tine fereastra vizibila.
+cele 99.
+
+## Se poate relua
+
+Progresul se salveaza in `localStorage` dupa fiecare placuta. Daca inchizi
+tabul, pica reteaua, sau browserul incetineste timerele pentru ca tabul a stat
+prea mult in fundal, lipesti scriptul din nou si dai iar `runAll()`: continua
+de unde a ramas si reincearca doar placutele esuate. Nu reia de la capat si nu
+trimite cereri duplicate.
+
+Nu mai conteaza deci daca tabul sta vizibil sau nu - in cel mai rau caz reiei.
+
+## Comenzi
+
+| comanda | ce face |
+|---|---|
+| `await runAll()` | ruleaza / continua verificarea |
+| `status()` | cate sunt gata, cate au esuat, cate au ramas |
+| `downloadCsv()` | exporta rezultatele ca CSV |
+| `downloadJson()` | exporta raspunsurile brute |
+| `reset()` | sterge progresul salvat |
 
 ## Configurare
 
-Editeaza obiectul `CONFIG` din capul fisierului:
+Editeaza `CONFIG` din capul fisierului:
 
 | camp | default | ce face |
 |---|---|---|
@@ -49,15 +70,12 @@ Editeaza obiectul `CONFIG` din capul fisierului:
 | `from` / `to` | `1` / `99` | intervalul numeric (formatat pe 2 cifre) |
 | `delayMs` | `2500` | pauza intre cereri |
 | `maxRetries` | `2` | reincercari per placuta |
-| `recaptchaAction` | `submit` | actiunea trimisa la `grecaptcha.execute` |
 
-### Daca primesti eroare de captcha
+## Daca prima cerere e respinsa
 
-Cel mai probabil `recaptchaAction` nu corespunde. Afla valoarea reala asa:
-in DevTools -> **Sources**, cauta in bundle-ul site-ului dupa `execute(` sau
-`action:`; sirul din `{ action: '...' }` e ce trebuie pus in `CONFIG`.
-Alternativ, pune un breakpoint pe `grecaptcha.enterprise.execute` si trimite o
-data formularul manual ca sa vezi argumentele.
+Scriptul se opreste imediat, nu bate degeaba in API de 99 de ori. Cel mai
+probabil captura nu a prins actiunea corecta: mai verifica o placuta manual din
+formular (asta rearmeaza captura) si da din nou `runAll()`.
 
 ## Forma cererii (referinta)
 
@@ -71,11 +89,11 @@ data formularul manual ca sa vezi argumentele.
 ```
 
 `single-request.sh` face un singur call cu un token dat manual - util ca sa
-confirmi ca payload-ul si headerele sunt corecte inainte de a rula tot lotul.
+confirmi ca payload-ul si headerele sunt corecte.
 
 ## Nota
 
 Endpointul e public, dar are rate limiting si protectie anti-bot. Scriptul
-respecta asta: cereri secventiale, pauze intre ele, fara paralelism si fara
-ocolirea captchei. Daca incepi sa primesti `429` sau erori repetate, opreste-te
-si mareste `delayMs`.
+respecta asta: cereri secventiale, pauze intre ele, fara paralelism, si fara
+ocolirea captchei - foloseste mecanismul paginii, nu il evita. Daca incepi sa
+primesti `429`, opreste-te si mareste `delayMs`.

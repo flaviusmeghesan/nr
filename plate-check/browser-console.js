@@ -3,12 +3,14 @@
  *
  * Cum se ruleaza:
  *   1. Deschide https://dgpci.mai.gov.ro/ si mergi pe formularul de verificare placute.
- *   2. Deschide DevTools -> Console (F12).
- *   3. Lipeste tot fisierul asta si apasa Enter.
+ *   2. F12 -> Console. Lipeste tot fisierul asta, Enter.
+ *   3. Verifica O SINGURA placuta manual, din formular. Scriptul intercepteaza
+ *      apelul si retine singur site key-ul + actiunea reCAPTCHA.
  *   4. Ruleaza:  await runAll()
  *
- * Trebuie rulat din pagina site-ului: altfel cererea e cross-origin si
- * nu ai acces la obiectul grecaptcha pentru a genera token-uri noi.
+ * Progresul se salveaza dupa fiecare placuta. Daca se intrerupe (inchizi tabul,
+ * browserul incetineste timerele), lipesti scriptul din nou si dai iar runAll() -
+ * continua de unde a ramas, nu reia de la capat.
  */
 
 const CONFIG = {
@@ -19,20 +21,83 @@ const CONFIG = {
   to: 99,
   language: 'RO',
   userEmail: '',
-  // Actiunea reCAPTCHA folosita de site. Daca primesti eroare de captcha,
-  // vezi README pentru cum afli valoarea corecta.
-  recaptchaAction: 'submit',
-  // Pauza intre cereri (ms). Nu cobori sub ~1500 - e un API public al statului,
-  // nu are rost sa il bombardezi.
+  // Pauza intre cereri (ms). Nu cobori sub ~1500 - e un API public al statului.
   delayMs: 2500,
-  // Pauza suplimentara dupa o eroare, inainte de retry.
   retryDelayMs: 8000,
   maxRetries: 2,
+  storageKey: 'plateCheck.results',
 };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
-/** Construieste lista MS01WWW ... MS99WWW (numarul e mereu pe 2 cifre). */
+/* ------------------------------------------------------------------ *
+ * Captura automata a parametrilor reCAPTCHA
+ * ------------------------------------------------------------------ */
+
+/*
+ * In loc sa ghicim actiunea reCAPTCHA, ne punem un wrapper peste
+ * grecaptcha.execute si lasam site-ul sa ne spuna singur ce foloseste:
+ * la prima verificare manuala din formular, interceptam argumentele reale.
+ */
+const captured = { siteKey: null, action: null, execute: null };
+
+/** API-ul reCAPTCHA folosit de pagina (Enterprise daca exista, altfel clasic). */
+function recaptchaApi() {
+  return (window.grecaptcha && window.grecaptcha.enterprise) || window.grecaptcha || null;
+}
+
+function armCapture() {
+  const api = recaptchaApi();
+  if (!api || typeof api.execute !== 'function') return false;
+  if (api.execute.__patched) return true;
+
+  // Pastram referinta nepatchuita: cererile noastre o folosesc direct, ca sa nu
+  // ne interceptam singuri apelurile si sa poluam captura.
+  const original = api.execute.bind(api);
+  captured.execute = original;
+
+  const wrapper = function (siteKey, opts) {
+    const action = opts && opts.action;
+    if (typeof siteKey === 'string' && siteKey.startsWith('6')) {
+      const isNew = siteKey !== captured.siteKey || action !== captured.action;
+      captured.siteKey = siteKey;
+      if (action) captured.action = action;
+      if (isNew) {
+        console.log('%cCaptat:', 'color:#0a0;font-weight:bold',
+          `siteKey=${siteKey}`, `action=${captured.action}`);
+      }
+    }
+    return original(siteKey, opts);
+  };
+  wrapper.__patched = true;
+  api.execute = wrapper;
+  return true;
+}
+
+/** Site key-ul se poate afla si din DOM, fara verificare manuala. Actiunea nu. */
+function sniffSiteKey() {
+  const el = document.querySelector('[data-sitekey]');
+  if (el) return el.getAttribute('data-sitekey');
+
+  for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
+    const m = s.src.match(/[?&]render=([^&]+)/);
+    if (m && m[1] !== 'explicit') return decodeURIComponent(m[1]);
+  }
+  return null;
+}
+
+async function getToken() {
+  const api = recaptchaApi();
+  if (!api) throw new Error('grecaptcha nu e incarcat in pagina.');
+  await new Promise((resolve) => api.ready(resolve));
+  const execute = captured.execute || api.execute.bind(api);
+  return execute(captured.siteKey, { action: captured.action });
+}
+
+/* ------------------------------------------------------------------ *
+ * Cererea
+ * ------------------------------------------------------------------ */
+
 function buildPlates() {
   const plates = [];
   for (let i = CONFIG.from; i <= CONFIG.to; i++) {
@@ -41,57 +106,16 @@ function buildPlates() {
   return plates;
 }
 
-/** Gaseste site key-ul reCAPTCHA incarcat de pagina. */
-function findSiteKey() {
-  const el = document.querySelector('[data-sitekey]');
-  if (el) return el.getAttribute('data-sitekey');
-
-  for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
-    const m = s.src.match(/[?&]render=([^&]+)/);
-    if (m && m[1] !== 'explicit') return decodeURIComponent(m[1]);
-  }
-
-  const cfg = window.___grecaptcha_cfg;
-  if (cfg && cfg.clients) {
-    for (const client of Object.values(cfg.clients)) {
-      const found = deepFindSiteKey(client, 0);
-      if (found) return found;
-    }
-  }
-  throw new Error('Nu am gasit site key-ul reCAPTCHA. Esti pe pagina formularului?');
-}
-
-function deepFindSiteKey(obj, depth) {
-  if (depth > 4 || !obj || typeof obj !== 'object') return null;
-  for (const v of Object.values(obj)) {
-    if (typeof v === 'string' && /^6[0-9A-Za-z_-]{38,}$/.test(v)) return v;
-    const nested = deepFindSiteKey(v, depth + 1);
-    if (nested) return nested;
-  }
-  return null;
-}
-
-/** Cere un token nou de la reCAPTCHA - unul singur, valabil o singura data. */
-async function getToken(siteKey) {
-  const api = (window.grecaptcha && window.grecaptcha.enterprise) || window.grecaptcha;
-  if (!api) throw new Error('grecaptcha nu e incarcat in pagina.');
-  await new Promise((resolve) => api.ready(resolve));
-  return api.execute(siteKey, { action: CONFIG.recaptchaAction });
-}
-
-async function checkPlate(plateNumber, siteKey) {
+async function checkPlate(plateNumber) {
   const res = await fetch(CONFIG.endpoint, {
     method: 'POST',
     credentials: 'include',
-    headers: {
-      'Accept': 'application/json',
-      'Content-Type': 'application/json',
-    },
+    headers: { 'Accept': 'application/json', 'Content-Type': 'application/json' },
     body: JSON.stringify({
       plateNumber,
       userEmail: CONFIG.userEmail,
       language: CONFIG.language,
-      reCaptchaKey: await getToken(siteKey),
+      reCaptchaKey: await getToken(),
     }),
   });
 
@@ -108,31 +132,89 @@ async function checkPlate(plateNumber, siteKey) {
   return body;
 }
 
-const results = [];
+/* ------------------------------------------------------------------ *
+ * Progres persistent
+ * ------------------------------------------------------------------ */
+
+function load() {
+  try { return JSON.parse(localStorage.getItem(CONFIG.storageKey)) || {}; }
+  catch { return {}; }
+}
+
+function save(store) {
+  try { localStorage.setItem(CONFIG.storageKey, JSON.stringify(store)); }
+  catch (e) { console.warn('Nu pot salva progresul:', e.message); }
+}
+
+function remaining() {
+  const store = load();
+  return buildPlates().filter((p) => !store[p] || store[p].ok === false);
+}
+
+/* ------------------------------------------------------------------ *
+ * Rulare
+ * ------------------------------------------------------------------ */
 
 async function runAll() {
-  const siteKey = findSiteKey();
-  const plates = buildPlates();
-  console.log(`Site key: ${siteKey}`);
-  console.log(`Verific ${plates.length} placute (${plates[0]} -> ${plates[plates.length - 1]})`);
+  armCapture();
 
-  results.length = 0;
+  if (!captured.siteKey) captured.siteKey = sniffSiteKey();
 
-  for (let i = 0; i < plates.length; i++) {
-    const plate = plates[i];
+  if (!captured.siteKey || !captured.action) {
+    console.warn(
+      '%cLipsesc parametrii reCAPTCHA.',
+      'color:#c00;font-weight:bold',
+      '\nVerifica O SINGURA placuta manual, din formularul paginii.' +
+      '\nScriptul prinde singur site key-ul si actiunea, apoi dai din nou: await runAll()'
+    );
+    return;
+  }
+
+  const todo = remaining();
+  const total = buildPlates().length;
+
+  if (!todo.length) {
+    console.log(`Toate cele ${total} sunt deja verificate. downloadCsv() sau reset() ca sa o iei de la capat.`);
+    return load();
+  }
+
+  console.log(`De verificat: ${todo.length} din ${total} (restul sunt deja salvate).`);
+  console.log(`siteKey=${captured.siteKey} action=${captured.action}`);
+
+  for (let i = 0; i < todo.length; i++) {
+    const plate = todo[i];
+    const store = load();
     let attempt = 0;
 
     for (;;) {
       try {
-        const body = await checkPlate(plate, siteKey);
-        results.push({ plate, ok: true, response: body });
-        console.log(`[${i + 1}/${plates.length}] ${plate}`, body);
+        const body = await checkPlate(plate);
+        store[plate] = { plate, ok: true, response: body, at: Date.now() };
+        save(store);
+        console.log(`[${i + 1}/${todo.length}] ${plate}`, body);
         break;
       } catch (e) {
         attempt++;
+
+        // Daca prima placuta pica pe captcha, parametrii sunt gresiti -
+        // ne oprim imediat in loc sa batem degeaba in API 99 de ori.
+        const looksLikeCaptcha =
+          e.status === 400 || e.status === 403 ||
+          /captcha/i.test(JSON.stringify(e.body || ''));
+
+        if (i === 0 && looksLikeCaptcha) {
+          console.error(
+            'Prima cerere a fost respinsa - foarte probabil actiunea reCAPTCHA e gresita.' +
+            '\nVerifica o placuta manual din formular ca scriptul sa recaptureze, apoi runAll().',
+            e.body
+          );
+          return;
+        }
+
         if (attempt > CONFIG.maxRetries) {
-          results.push({ plate, ok: false, error: String(e), body: e.body });
-          console.warn(`[${i + 1}/${plates.length}] ${plate} EROARE`, e.body || e);
+          store[plate] = { plate, ok: false, error: String(e), body: e.body, at: Date.now() };
+          save(store);
+          console.warn(`[${i + 1}/${todo.length}] ${plate} EROARE`, e.body || e);
           break;
         }
         console.warn(`${plate}: incercarea ${attempt} a esuat (${e.message}), reincerc...`);
@@ -140,15 +222,32 @@ async function runAll() {
       }
     }
 
-    if (i < plates.length - 1) await sleep(CONFIG.delayMs);
+    if (i < todo.length - 1) await sleep(CONFIG.delayMs);
   }
 
-  console.log('Gata.');
-  console.table(results.map(flatten));
-  return results;
+  const left = remaining();
+  console.log(left.length ? `Gata, dar au ramas ${left.length} cu erori. Ruleaza iar runAll().` : 'Gata, toate.');
+  console.table(Object.values(load()).map(flatten));
+  return load();
 }
 
-/** Aplatizeaza raspunsul ca sa se vada frumos in console.table / CSV. */
+function status() {
+  const store = load();
+  const done = Object.values(store).filter((r) => r.ok).length;
+  const failed = Object.values(store).filter((r) => !r.ok).length;
+  console.log(`Salvate: ${done} reusite, ${failed} cu eroare, ${remaining().length} ramase.`);
+  return { done, failed, remaining: remaining() };
+}
+
+function reset() {
+  localStorage.removeItem(CONFIG.storageKey);
+  console.log('Progres sters.');
+}
+
+/* ------------------------------------------------------------------ *
+ * Export
+ * ------------------------------------------------------------------ */
+
 function flatten(r) {
   const out = { plate: r.plate, ok: r.ok };
   if (r.response && typeof r.response === 'object') {
@@ -162,29 +261,42 @@ function flatten(r) {
   return out;
 }
 
-/** Descarca rezultatele ca CSV. */
+function download(filename, content, type) {
+  const url = URL.createObjectURL(new Blob([content], { type }));
+  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
+function sortedResults() {
+  const store = load();
+  return buildPlates().filter((p) => store[p]).map((p) => store[p]);
+}
+
 function downloadCsv(filename = 'plate-status.csv') {
-  if (!results.length) return console.warn('Nu exista rezultate. Ruleaza intai: await runAll()');
-  const rows = results.map(flatten);
+  const rows = sortedResults().map(flatten);
+  if (!rows.length) return console.warn('Nu exista rezultate. Ruleaza intai: await runAll()');
   const cols = [...new Set(rows.flatMap(Object.keys))];
   const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
   const csv = [cols.join(','), ...rows.map((r) => cols.map((c) => esc(r[c])).join(','))].join('\n');
-
-  const url = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  a.click();
-  URL.revokeObjectURL(url);
+  download(filename, csv, 'text/csv;charset=utf-8');
 }
 
-/** Descarca rezultatele brute ca JSON. */
 function downloadJson(filename = 'plate-status.json') {
-  if (!results.length) return console.warn('Nu exista rezultate. Ruleaza intai: await runAll()');
-  const url = URL.createObjectURL(
-    new Blob([JSON.stringify(results, null, 2)], { type: 'application/json' })
-  );
-  const a = Object.assign(document.createElement('a'), { href: url, download: filename });
-  a.click();
-  URL.revokeObjectURL(url);
+  const rows = sortedResults();
+  if (!rows.length) return console.warn('Nu exista rezultate. Ruleaza intai: await runAll()');
+  download(filename, JSON.stringify(rows, null, 2), 'application/json');
 }
 
-console.log('Incarcat. Ruleaza:  await runAll()   apoi:  downloadCsv()  /  downloadJson()');
+/* ------------------------------------------------------------------ */
+
+if (armCapture()) {
+  console.log(
+    '%cIncarcat.', 'color:#0a0;font-weight:bold',
+    '\n1. Verifica o placuta manual din formular (o singura data) - ca sa captez parametrii reCAPTCHA.' +
+    '\n2. Apoi:  await runAll()' +
+    '\n\nAltele:  status()  downloadCsv()  downloadJson()  reset()'
+  );
+} else {
+  console.warn('grecaptcha nu e in pagina. Esti pe formularul de verificare placute?');
+}
