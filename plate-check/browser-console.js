@@ -232,6 +232,24 @@ function detectMode() {
 }
 
 /*
+ * Bifa "nu sunt robot" cere om la fiecare verificare, deci exclude rularea in
+ * lot. Se vede din anchorul widgetului: cel invizibil are size=invisible.
+ */
+function bifaUmana() {
+  if (detectMode() !== 'v2') return false;
+
+  for (const f of document.querySelectorAll('iframe[src*="recaptcha"]')) {
+    try {
+      const u = new URL(f.src);
+      if (!u.pathname.includes('bframe')) {
+        return u.searchParams.get('size') !== 'invisible';
+      }
+    } catch { /* src invalid, ignoram */ }
+  }
+  return false;  // widgetul nu e randat inca - nu putem sti
+}
+
+/*
  * La v2 nu exista actiuni: tokenul vine dintr-un widget. Daca pagina nu ne da
  * unul (nu a randat inca, sau apelurile ei nu trec prin hook), ne randam noi
  * unul invizibil, ascuns, cu site key-ul lor - acelasi mecanism, aceeasi cheie.
@@ -623,29 +641,183 @@ function downloadJson(filename = 'plate-status.json') {
 }
 
 /* ------------------------------------------------------------------ *
+ * Mod asistat - pentru reCAPTCHA v2 cu bifa
+ * ------------------------------------------------------------------ *
+ *
+ * Cand captcha cere bifa umana la fiecare verificare, cererile nu se pot
+ * automatiza. Dar restul da: ascultam raspunsurile aplicatiei, le salvam
+ * singuri, si completam campul cu placuta urmatoare. Tu doar bifezi si trimiti.
+ */
+
+/** Scrie in input asa incat Angular sa observe schimbarea. */
+function setInputValue(el, value) {
+  const setter = Object.getOwnPropertyDescriptor(
+    Object.getPrototypeOf(el), 'value'
+  ).set;
+  setter.call(el, value);
+  el.dispatchEvent(new Event('input', { bubbles: true }));
+  el.dispatchEvent(new Event('change', { bubbles: true }));
+}
+
+/** Campul de numar: cel invatat prin learnField(), altfel il ghicim. */
+function plateField() {
+  const learned = window.__plateCheckField;
+  if (learned && document.contains(learned)) return learned;
+
+  const inputs = [...document.querySelectorAll('input')];
+  return inputs.find((el) => {
+    const attrs = [
+      el.getAttribute('formcontrolname'), el.name, el.id, el.placeholder,
+      el.getAttribute('aria-label'),
+    ].join(' ');
+    return /numar|nr|plate|inmatric/i.test(attrs);
+  }) || null;
+}
+
+/** Daca ghicitul da gres: rulezi asta si dai click pe campul corect. */
+function learnField() {
+  console.log('Da click pe campul unde scrii numarul de inmatriculare...');
+  const handler = (e) => {
+    document.removeEventListener('click', handler, true);
+    if (e.target && e.target.tagName === 'INPUT') {
+      window.__plateCheckField = e.target;
+      console.log('%cCamp inregistrat.', 'color:#0a0;font-weight:bold');
+      fillNext();
+    } else {
+      console.warn('Nu ai dat click pe un input. Ruleaza din nou learnField().');
+    }
+  };
+  document.addEventListener('click', handler, true);
+}
+
+function recordResult(plate, body) {
+  const store = load();
+  store[plate] = { plate, ok: true, response: body, at: Date.now() };
+  save(store);
+  console.log(`%c${plate}`, 'color:#0a0;font-weight:bold', body);
+  fillNext();
+}
+
+/** Pune urmatoarea placuta neverificata in camp. */
+function fillNext() {
+  const left = remaining();
+  if (!left.length) {
+    console.log('%cGata, toate cele 99. Ruleaza downloadCsv()', 'color:#0a0;font-weight:bold');
+    return null;
+  }
+
+  const el = plateField();
+  if (!el) {
+    console.warn(`Urmatoarea: ${left[0]} (nu gasesc campul - ruleaza learnField())`);
+    return left[0];
+  }
+
+  setInputValue(el, left[0]);
+  el.focus();
+  console.log(`Completat ${left[0]} - bifeaza si trimite. Ramase: ${left.length}`);
+  return left[0];
+}
+
+/*
+ * Ascultam cererile catre plate-status. Aplicatia lor foloseste XMLHttpRequest
+ * (via Angular HttpClient), dar acoperim si fetch, ca sa fie sigur.
+ */
+function armLogger() {
+  if (window.__plateCheckLoggerArmed) return;
+  window.__plateCheckLoggerArmed = true;
+
+  const plateFromBody = (body) => {
+    try { return JSON.parse(body).plateNumber; } catch { return null; }
+  };
+
+  const origFetch = window.fetch;
+  window.fetch = function (input, init) {
+    const url = typeof input === 'string' ? input : (input && input.url) || '';
+    const plate = url.includes('/plate-status') && init && init.body
+      ? plateFromBody(init.body) : null;
+
+    const promise = origFetch.apply(this, arguments);
+    if (plate) {
+      promise.then((res) => {
+        res.clone().json().then((body) => recordResult(plate, body)).catch(() => {});
+      }).catch(() => {});
+    }
+    return promise;
+  };
+
+  const origOpen = XMLHttpRequest.prototype.open;
+  const origSend = XMLHttpRequest.prototype.send;
+
+  XMLHttpRequest.prototype.open = function (method, url) {
+    this.__plateCheckUrl = url;
+    return origOpen.apply(this, arguments);
+  };
+
+  XMLHttpRequest.prototype.send = function (body) {
+    if (String(this.__plateCheckUrl || '').includes('/plate-status')) {
+      const plate = plateFromBody(body);
+      if (plate) {
+        this.addEventListener('load', () => {
+          if (this.status < 200 || this.status >= 300) return;
+          let parsed;
+          try { parsed = JSON.parse(this.responseText); } catch { parsed = this.responseText; }
+          recordResult(plate, parsed);
+        });
+      }
+    }
+    return origSend.apply(this, arguments);
+  };
+
+  console.log('Ascult raspunsurile de la plate-status.');
+}
+
+/** Porneste modul asistat. */
+function assist() {
+  armLogger();
+  console.log(
+    '%cMod asistat pornit.', 'color:#0a0;font-weight:bold',
+    '\nCompletez eu placuta, tu bifezi captcha si apesi verifica.' +
+    '\nRezultatul se salveaza singur si trec la urmatoarea.' +
+    '\n\nDaca nu completeaza campul corect:  learnField()' +
+    '\nLa final:  downloadCsv()'
+  );
+  fillNext();
+}
+
+/* ------------------------------------------------------------------ *
  * Expunere in consola
  * ------------------------------------------------------------------ */
 
 Object.assign(window, {
   runAll, progres, reset, downloadCsv, downloadJson,
   diagnose, testToken, raportIframes, findActionsInBundles,
+  assist, learnField, fillNext,
 });
 window.plateCheck = { CONFIG, captured, remaining, buildPlates };
 
 /* ------------------------------------------------------------------ */
 
-if (armCapture()) {
+if (!armCapture()) {
+  console.warn('grecaptcha nu e in pagina. Esti pe formularul de verificare placute?');
+} else if (bifaUmana()) {
+  // Cazul drpciv: v2 cu bifa, deci automatizarea completa e exclusa.
+  console.log(
+    '%cIncarcat.', 'color:#0a0;font-weight:bold',
+    '\n\nCaptcha de aici cere bifa umana la fiecare verificare, deci cererile' +
+    '\nnu se pot automatiza. Dar restul da:' +
+    '\n\n  assist()' +
+    '\n\nCompletez eu placuta, tu bifezi si trimiti, rezultatul se salveaza' +
+    '\nsingur si trec la urmatoarea. La final:  downloadCsv()'
+  );
+} else {
   console.log(
     '%cIncarcat.', 'color:#0a0;font-weight:bold',
     '\n\nRuleaza direct:  await runAll()' +
     '\nDetecteaza singur daca e reCAPTCHA v2 sau v3 si isi ia parametrii.' +
-    '\n\nDaca se plange ca nu le gaseste, verifica o placuta manual din formular' +
-    '\n(hookul o prinde), sau forteaza:  await runAll({ action: "..." })' +
-    '\n\nIntai un test rapid, ca sa vezi daca merge:  await testToken()' +
+    '\n\nTest rapid, ca sa vezi daca merge:  await testToken()' +
+    '\nDaca captcha cere bifa umana, treci pe:  assist()' +
     '\n\nAltele:  diagnose()  progres()  downloadCsv()  downloadJson()  reset()'
   );
-} else {
-  console.warn('grecaptcha nu e in pagina. Esti pe formularul de verificare placute?');
 }
 
 })();

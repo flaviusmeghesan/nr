@@ -16,6 +16,22 @@ rulezi din browserul tau, in sesiunea ta, de pe IP-ul tau. Un browser headless
 pornit dintr-un server nu e o varianta: reCAPTCHA Enterprise scoreaza exact
 tiparul ala drept bot, deci nici nu ar functiona.
 
+## Ce s-a constatat pe site-ul lor
+
+Formularul drpciv foloseste **reCAPTCHA v2 cu bifa** ("nu sunt robot"), nu v3.
+Dovada e chiar eroarea Google la incercarea de a porni widgetul programatic:
+
+```
+grecaptcha.execute only works with invisible reCAPTCHA.
+```
+
+Bifa cere om la **fiecare** verificare, iar fiecare token e de unica folosinta.
+Prin urmare cererile nu se pot automatiza, si nici nu se incearca: singura cale
+ar fi ocolirea captchei, ceea ce scriptul nu face.
+
+Ce se poate automatiza e tot restul. Vezi **Mod asistat** mai jos - asta e
+varianta care functioneaza pe drpciv.
+
 ## Utilizare
 
 1. Deschide <https://dgpci.mai.gov.ro/> si navigheaza la formularul de
@@ -26,11 +42,19 @@ tiparul ala drept bot, deci nici nu ar functiona.
 
    > Prima data cand lipesti ceva in consola, Chrome/Brave refuza si iti cere
    > sa scrii `allow pasting` + Enter. Scrii asta o data, apoi lipesti din nou.
-3. Porneste:
+3. Porneste. **Pe drpciv:**
+
+   ```js
+   assist()
+   ```
+
+   Pe un site cu captcha invizibila sau v3, automat de tot:
 
    ```js
    await runAll()
    ```
+
+   Nu esti sigur care? `await testToken()` iti spune in cateva secunde.
 
 4. Cand se termina, exporta:
 
@@ -68,6 +92,34 @@ in loc sa insiste degeaba.
 `diagnose()` afiseaza varianta detectata, site key-ul, iframeurile, si daca
 hookul e activ.
 
+## Mod asistat
+
+Pentru captcha cu bifa. Bifa ramane a ta - restul nu.
+
+```js
+assist()
+```
+
+Din acel moment:
+
+1. Scriptul scrie singur prima placuta neverificata in campul formularului.
+2. Tu bifezi captcha si apesi verifica.
+3. Scriptul asculta raspunsul aplicatiei (`XMLHttpRequest`, cum trimite Angular),
+   il salveaza, si scrie automat placuta urmatoare in camp.
+
+Deci nu tastezi numere si nu notezi rezultate; doar bifezi si trimiti. Dupa
+prima verificare reusita, reCAPTCHA de obicei nu mai da provocari cu imagini,
+asa ca fiecare pas ajunge sa fie doar doua clickuri.
+
+Daca nu nimereste campul corect:
+
+```js
+learnField()   // apoi dai click pe campul de numar
+```
+
+Progresul se salveaza la fel ca la rularea automata, deci poti opri si relua
+oricand. La final `downloadCsv()`.
+
 ## Se poate relua
 
 Progresul se salveaza in `localStorage` dupa fiecare placuta. Daca inchizi
@@ -84,6 +136,9 @@ Scriptul poate fi lipit de oricate ori in aceeasi pagina, nu se incurca singur.
 | comanda | ce face |
 |---|---|
 | `await runAll()` | ruleaza / continua verificarea |
+| `assist()` | mod asistat, pentru captcha cu bifa |
+| `learnField()` | inregistreaza campul de numar printr-un click |
+| `await testToken()` | verifica in cateva secunde daca se poate rula automat |
 | `await runAll({action:'x'})` | forteaza o anumita actiune reCAPTCHA |
 | `diagnose()` | ce reCAPTCHA e in pagina si ce parametri s-au gasit |
 | `progres()` | cate sunt gata, cate au esuat, cate au ramas |
