@@ -6,9 +6,10 @@
  *   2. F12 -> Console. Lipeste tot fisierul asta, Enter.
  *   3. Ruleaza:  await runAll()
  *
- * Site key-ul il ia din iframeul reCAPTCHA, iar actiunea o cauta in bundle-urile
- * paginii si o confirma incercand-o pe o singura placuta. Daca nu reuseste,
- * verifica o placuta manual din formular sau da runAll({ action: "..." }).
+ * Detecteaza singur varianta de reCAPTCHA:
+ *   v3 -> ia site key-ul din api.js?render=... si cauta actiunea in bundle
+ *   v2 -> randeaza un widget invizibil cu site key-ul lor si ia token din el
+ * Daca se impotmoleste, ruleaza diagnose().
  *
  * Progresul se salveaza dupa fiecare placuta. Daca se intrerupe (inchizi tabul,
  * browserul incetineste timerele), lipesti scriptul din nou si dai iar runAll() -
@@ -101,6 +102,7 @@ function armCapture() {
 
     if (typeof api.render === 'function' && !api.render.__patched) {
       const originalRender = api.render.bind(api);
+      if (!captured.render) captured.render = originalRender;
       const renderWrapper = function (container, params) {
         const widgetId = originalRender(container, params);
         if (params && params.sitekey) {
@@ -172,6 +174,50 @@ function sniffSiteKey() {
   return null;
 }
 
+/*
+ * v3 vs v2. Semnul decisiv e cum a fost incarcat api.js:
+ *   ?render=<sitekey>  -> v3, cheia e inregistrata, execute(key, {action}) merge
+ *   fara render=       -> v2, cheia traieste intr-un widget, iar execute(key, ...)
+ *                         da "Invalid site key or not loaded in api.js"
+ */
+function detectMode() {
+  for (const el of document.querySelectorAll('script[src*="recaptcha"]')) {
+    const m = el.src.match(/[?&]render=([^&]+)/);
+    if (m && m[1] !== 'explicit') return 'v3';
+  }
+  const api = recaptchaApi();
+  if (api && typeof api.getResponse === 'function' && typeof api.render === 'function') return 'v2';
+  return 'necunoscut';
+}
+
+/*
+ * La v2 nu exista actiuni: tokenul vine dintr-un widget. Daca pagina nu ne da
+ * unul (nu a randat inca, sau apelurile ei nu trec prin hook), ne randam noi
+ * unul invizibil, ascuns, cu site key-ul lor - acelasi mecanism, aceeasi cheie.
+ */
+function ensureWidget() {
+  if (captured.widgetId !== null) return captured.widgetId;
+
+  const api = recaptchaApi();
+  const siteKey = captured.siteKey || sniffSiteKey();
+  if (!siteKey) throw new Error('Nu am site key pentru widget.');
+  if (!api || typeof api.render !== 'function') throw new Error('grecaptcha.render lipseste.');
+
+  let host = document.getElementById('plateCheckCaptchaHost');
+  if (!host) {
+    host = document.createElement('div');
+    host.id = 'plateCheckCaptchaHost';
+    host.style.cssText =
+      'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+    document.body.appendChild(host);
+  }
+
+  const render = captured.render || api.render.bind(api);
+  captured.widgetId = render(host, { sitekey: siteKey, size: 'invisible', callback: () => {} });
+  console.log(`Widget propriu randat: widgetId=${captured.widgetId} siteKey=${siteKey}`);
+  return captured.widgetId;
+}
+
 /** Ce fel de reCAPTCHA e in pagina - util cand captura nu prinde. */
 function diagnose() {
   const api = recaptchaApi();
@@ -187,6 +233,8 @@ function diagnose() {
     enterprise: !!(window.grecaptcha && window.grecaptcha.enterprise),
     metode: api ? Object.keys(api).filter((k) => typeof api[k] === 'function') : [],
     iframes: frames,
+    varianta: detectMode(),
+    elementDataSitekey: !!document.querySelector('[data-sitekey]'),
     siteKeyGasit: captured.siteKey || sniffSiteKey(),
     actiuneCaptata: captured.action,
     widgetId: captured.widgetId,
@@ -197,9 +245,11 @@ function diagnose() {
   console.log('%cDiagnostic reCAPTCHA', 'color:#06c;font-weight:bold');
   console.log(info);
   console.log(
-    frames.some((f) => (f.path || '').includes('/enterprise/'))
-      ? 'Pare reCAPTCHA Enterprise.'
-      : 'Pare reCAPTCHA clasic (api2).'
+    info.varianta === 'v3'
+      ? 'reCAPTCHA v3 (execute cu actiune).'
+      : info.varianta === 'v2'
+        ? 'reCAPTCHA v2 (widget; actiunile nu se aplica).'
+        : 'Varianta neclara - grecaptcha poate nu s-a incarcat complet.'
   );
   return info;
 }
@@ -210,33 +260,31 @@ async function getToken(actionOverride) {
   await new Promise((resolve) => api.ready(resolve));
 
   const execute = captured.execute || api.execute.bind(api);
-
-  // v3 / Enterprise: tokenul vine direct din promisiune.
   const action = actionOverride || captured.action;
-  if (captured.siteKey && action) {
+
+  // v3: tokenul vine direct din promisiune.
+  if (detectMode() === 'v3' && captured.siteKey && action) {
     return execute(captured.siteKey, { action });
   }
 
-  // v2 invizibil: pornim verificarea si asteptam sa apara raspunsul.
-  if (captured.widgetId !== null && typeof api.getResponse === 'function') {
-    if (captured.reset) captured.reset(captured.widgetId);
-    execute(captured.widgetId);
+  // v2: pornim widgetul si asteptam sa apara raspunsul.
+  const widgetId = ensureWidget();
+  const reset = captured.reset || (typeof api.reset === 'function' ? api.reset.bind(api) : null);
+  if (reset) reset(widgetId);
+  execute(widgetId);
 
-    const deadline = Date.now() + 30000;
-    for (;;) {
-      const token = api.getResponse(captured.widgetId);
-      if (token) return token;
-      if (Date.now() > deadline) {
-        throw new Error(
-          'Timeout la reCAPTCHA v2 - probabil cere click uman pentru fiecare verificare, ' +
-          'caz in care rularea in lot nu e posibila.'
-        );
-      }
-      await sleep(300);
+  const deadline = Date.now() + 30000;
+  for (;;) {
+    const token = api.getResponse(widgetId);
+    if (token) return token;
+    if (Date.now() > deadline) {
+      throw new Error(
+        'Timeout la reCAPTCHA v2 - widgetul nu a produs token in 30s. ' +
+        'Daca cheia lor cere bifa umana la fiecare verificare, rularea in lot nu e posibila.'
+      );
     }
+    await sleep(300);
   }
-
-  throw new Error('Nu am parametrii reCAPTCHA. Ruleaza diagnose().');
 }
 
 /* ------------------------------------------------------------------ *
@@ -342,15 +390,17 @@ async function runAll(opts = {}) {
   if (!captured.siteKey) captured.siteKey = sniffSiteKey();
   if (opts.action) captured.action = opts.action;
 
-  const v2 = captured.widgetId !== null;
+  // Varianta decide tot: la v2 nu exista actiuni, deci nici nu le cautam.
+  const mode = detectMode();
+  const v2 = mode !== 'v3';
+  console.log(`Varianta reCAPTCHA: ${mode}`);
 
-  // Fara actiune captata, o cautam in bundle-urile lor.
   let candidates = [];
-  if (!captured.action && !v2 && captured.siteKey) {
+  if (!v2 && !captured.action && captured.siteKey) {
     candidates = rankActions(await findActionsInBundles());
   }
 
-  if (!captured.siteKey && !v2) {
+  if (!captured.siteKey) {
     console.warn(
       '%cNu gasesc site key-ul reCAPTCHA.', 'color:#c00;font-weight:bold',
       '\nEsti pe pagina formularului de verificare placute? Ruleaza diagnose().'
@@ -513,7 +563,7 @@ if (armCapture()) {
   console.log(
     '%cIncarcat.', 'color:#0a0;font-weight:bold',
     '\n\nRuleaza direct:  await runAll()' +
-    '\nIsi gaseste singur site key-ul si actiunea reCAPTCHA.' +
+    '\nDetecteaza singur daca e reCAPTCHA v2 sau v3 si isi ia parametrii.' +
     '\n\nDaca se plange ca nu le gaseste, verifica o placuta manual din formular' +
     '\n(hookul o prinde), sau forteaza:  await runAll({ action: "..." })' +
     '\n\nAltele:  diagnose()  progres()  downloadCsv()  downloadJson()  reset()'

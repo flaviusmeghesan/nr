@@ -43,25 +43,30 @@ cele 99.
 
 ## Cum isi gaseste parametrii reCAPTCHA
 
-Nu trebuie sa cauti nimic manual. Scriptul incearca, in ordine:
+Nu trebuie sa cauti nimic manual. Primul lucru pe care il stabileste e
+**varianta**, pentru ca de ea depinde tot restul. Semnul decisiv e cum a fost
+incarcat `api.js`:
 
-1. **Site key** - din `src`-ul iframeului reCAPTCHA din pagina (parametrul `k`).
-2. **Actiune** - o cauta in bundle-urile JavaScript ale paginii (sunt
-   same-origin, deci le poate citi), pune candidatii plauzibili primii, si
-   confirma alegerea incercand-o pe o singura placuta. Costa cel mult cateva
-   cereri, nu 99.
-3. **Hook** - daca lipesti scriptul si apoi verifici o placuta manual din
-   formular, intercepteaza apelul paginii catre `grecaptcha.execute` si ia
-   parametrii reali de acolo. Merge doar daca aplicatia nu si-a salvat deja o
-   referinta la functie inainte de lipire - de aia nu e metoda principala.
-4. **Manual** - `await runAll({ action: "numele_actiunii" })`.
+| incarcare | varianta | cum se obtine tokenul |
+|---|---|---|
+| `api.js?render=<sitekey>` | v3 | `execute(sitekey, { action })` |
+| `api.js` simplu | v2 | un widget; `execute(widgetId)` + `getResponse()` |
 
-Suporta si reCAPTCHA v2 invizibil (`render` + `getResponse`), nu doar v3 /
-Enterprise. Daca e v2 cu bifa care cere click uman de fiecare data, rularea in
-lot pur si simplu nu e posibila, si scriptul iti spune asta in loc sa insiste.
+**La v3** ia site key-ul din parametrul `render=`, apoi cauta actiunea in
+bundle-urile same-origin ale paginii, pune candidatii plauzibili primii si
+confirma alegerea incercand-o pe o singura placuta - cateva cereri, nu 99.
 
-`diagnose()` afiseaza ce a gasit in pagina: tipul de reCAPTCHA, site key-ul,
-iframeurile, si daca hookul e activ.
+**La v2 nu exista actiuni.** Site key-ul vine din elementul `[data-sitekey]` sau
+din iframeul reCAPTCHA, iar tokenul dintr-un widget: daca pagina nu ne da unul,
+scriptul randeaza el unul invizibil, ascuns, cu site key-ul lor - acelasi
+mecanism si aceeasi cheie ca formularul.
+
+Daca cheia lor e de tip v2 cu bifa care cere click uman la fiecare verificare,
+rularea in lot pur si simplu nu e posibila; scriptul da timeout cu mesaj clar,
+in loc sa insiste degeaba.
+
+`diagnose()` afiseaza varianta detectata, site key-ul, iframeurile, si daca
+hookul e activ.
 
 ## Se poate relua
 
