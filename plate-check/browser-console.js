@@ -175,6 +175,47 @@ function sniffSiteKey() {
 }
 
 /*
+ * Iframeurile reCAPTCHA spun ce fel de verificare cere cheia:
+ *   anchor cu size=invisible -> se rezolva singur, se poate rula in lot
+ *   anchor fara size         -> bifa "nu sunt robot", cere click uman
+ *   bframe vizibil           -> provocare cu imagini, cere om
+ */
+function raportIframes() {
+  const frames = [...document.querySelectorAll('iframe[src*="recaptcha"]')].map((f) => {
+    let info = { src: f.src };
+    try {
+      const u = new URL(f.src);
+      info = { tip: u.pathname.includes('bframe') ? 'provocare' : 'anchor', size: u.searchParams.get('size') };
+    } catch { /* ignoram */ }
+    const r = f.getBoundingClientRect ? f.getBoundingClientRect() : null;
+    info.vizibil = r ? (r.width > 10 && r.height > 10) : null;
+    return info;
+  });
+  console.log('Iframeuri reCAPTCHA:', frames);
+  return frames;
+}
+
+/*
+ * Verificare rapida: incearca un singur token si spune exact ce s-a intamplat.
+ * Mult mai rapid decat sa astepti runAll cu retryurile lui.
+ */
+async function testToken() {
+  console.log(`Varianta: ${detectMode()}`);
+  const t0 = Date.now();
+  try {
+    const token = await getToken();
+    console.log('%cToken obtinut in ' + (Date.now() - t0) + 'ms', 'color:#0a0;font-weight:bold',
+      `lungime=${token.length}`, `incepe cu ${token.slice(0, 10)}...`);
+    console.log('Deci se poate rula in lot. Da:  await runAll()');
+    return token;
+  } catch (e) {
+    console.error('Nu am obtinut token:', e.message);
+    raportIframes();
+    return null;
+  }
+}
+
+/*
  * v3 vs v2. Semnul decisiv e cum a fost incarcat api.js:
  *   ?render=<sitekey>  -> v3, cheia e inregistrata, execute(key, {action}) merge
  *   fara render=       -> v2, cheia traieste intr-un widget, iar execute(key, ...)
@@ -203,12 +244,25 @@ function ensureWidget() {
   if (!siteKey) throw new Error('Nu am site key pentru widget.');
   if (!api || typeof api.render !== 'function') throw new Error('grecaptcha.render lipseste.');
 
+  // Daca pagina si-a randat deja widgetul, il folosim pe al ei - e configurat
+  // exact cum se asteapta site-ul. getResponse arunca daca id-ul nu exista.
+  for (let id = 0; id < 3; id++) {
+    try {
+      api.getResponse(id);
+      captured.widgetId = id;
+      console.log(`Folosesc widgetul paginii: widgetId=${id}`);
+      return id;
+    } catch { /* nu exista, incercam urmatorul */ }
+  }
+
   let host = document.getElementById('plateCheckCaptchaHost');
   if (!host) {
     host = document.createElement('div');
     host.id = 'plateCheckCaptchaHost';
-    host.style.cssText =
-      'position:fixed;bottom:0;right:0;width:1px;height:1px;opacity:0;pointer-events:none;';
+    // Containerul trebuie sa fie chiar vizibil: reCAPTCHA invizibil refuza sa
+    // ruleze intr-unul ascuns (opacity 0 / display none), pentru ca are nevoie
+    // sa isi randeze badgeul.
+    host.style.cssText = 'position:fixed;bottom:10px;right:10px;z-index:2147483647;';
     document.body.appendChild(host);
   }
 
@@ -273,14 +327,32 @@ async function getToken(actionOverride) {
   if (reset) reset(widgetId);
   execute(widgetId);
 
-  const deadline = Date.now() + 30000;
+  const start = Date.now();
+  const deadline = start + 30000;
+  let anuntat = false;
+
   for (;;) {
     const token = api.getResponse(widgetId);
     if (token) return token;
+
+    // Dupa 4s fara token, spunem ce se intampla in loc sa tacem 30 de secunde.
+    if (!anuntat && Date.now() - start > 4000) {
+      anuntat = true;
+      console.log('Astept token de la widget... (max 30s)');
+      const provocareVizibila = raportIframes().some((f) => f.tip === 'provocare' && f.vizibil);
+      if (provocareVizibila) {
+        throw new Error(
+          'reCAPTCHA a deschis o provocare vizibila - cheia lor cere interactiune umana ' +
+          'la fiecare verificare, deci rularea in lot nu e posibila.'
+        );
+      }
+    }
+
     if (Date.now() > deadline) {
+      raportIframes();
       throw new Error(
         'Timeout la reCAPTCHA v2 - widgetul nu a produs token in 30s. ' +
-        'Daca cheia lor cere bifa umana la fiecare verificare, rularea in lot nu e posibila.'
+        'Cel mai probabil cheia e de tip bifa, care cere click uman la fiecare verificare.'
       );
     }
     await sleep(300);
@@ -554,7 +626,10 @@ function downloadJson(filename = 'plate-status.json') {
  * Expunere in consola
  * ------------------------------------------------------------------ */
 
-Object.assign(window, { runAll, progres, reset, downloadCsv, downloadJson, diagnose, findActionsInBundles });
+Object.assign(window, {
+  runAll, progres, reset, downloadCsv, downloadJson,
+  diagnose, testToken, raportIframes, findActionsInBundles,
+});
 window.plateCheck = { CONFIG, captured, remaining, buildPlates };
 
 /* ------------------------------------------------------------------ */
@@ -566,6 +641,7 @@ if (armCapture()) {
     '\nDetecteaza singur daca e reCAPTCHA v2 sau v3 si isi ia parametrii.' +
     '\n\nDaca se plange ca nu le gaseste, verifica o placuta manual din formular' +
     '\n(hookul o prinde), sau forteaza:  await runAll({ action: "..." })' +
+    '\n\nIntai un test rapid, ca sa vezi daca merge:  await testToken()' +
     '\n\nAltele:  diagnose()  progres()  downloadCsv()  downloadJson()  reset()'
   );
 } else {
