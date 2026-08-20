@@ -26,16 +26,13 @@ tiparul ala drept bot, deci nici nu ar functiona.
 
    > Prima data cand lipesti ceva in consola, Chrome/Brave refuza si iti cere
    > sa scrii `allow pasting` + Enter. Scrii asta o data, apoi lipesti din nou.
-3. **Verifica o singura placuta manual, din formular.** Scriptul intercepteaza
-   apelul paginii catre `grecaptcha.execute` si retine singur site key-ul si
-   actiunea - nu mai trebuie sa cauti nimic prin bundle.
-4. Porneste:
+3. Porneste:
 
    ```js
    await runAll()
    ```
 
-5. Cand se termina, exporta:
+4. Cand se termina, exporta:
 
    ```js
    downloadCsv()    // sau downloadJson()
@@ -43,6 +40,28 @@ tiparul ala drept bot, deci nici nu ar functiona.
 
 Ruleaza secvential, cu 2.5s pauza intre cereri - deci ~4-5 minute pentru toate
 cele 99.
+
+## Cum isi gaseste parametrii reCAPTCHA
+
+Nu trebuie sa cauti nimic manual. Scriptul incearca, in ordine:
+
+1. **Site key** - din `src`-ul iframeului reCAPTCHA din pagina (parametrul `k`).
+2. **Actiune** - o cauta in bundle-urile JavaScript ale paginii (sunt
+   same-origin, deci le poate citi), pune candidatii plauzibili primii, si
+   confirma alegerea incercand-o pe o singura placuta. Costa cel mult cateva
+   cereri, nu 99.
+3. **Hook** - daca lipesti scriptul si apoi verifici o placuta manual din
+   formular, intercepteaza apelul paginii catre `grecaptcha.execute` si ia
+   parametrii reali de acolo. Merge doar daca aplicatia nu si-a salvat deja o
+   referinta la functie inainte de lipire - de aia nu e metoda principala.
+4. **Manual** - `await runAll({ action: "numele_actiunii" })`.
+
+Suporta si reCAPTCHA v2 invizibil (`render` + `getResponse`), nu doar v3 /
+Enterprise. Daca e v2 cu bifa care cere click uman de fiecare data, rularea in
+lot pur si simplu nu e posibila, si scriptul iti spune asta in loc sa insiste.
+
+`diagnose()` afiseaza ce a gasit in pagina: tipul de reCAPTCHA, site key-ul,
+iframeurile, si daca hookul e activ.
 
 ## Se poate relua
 
@@ -60,6 +79,8 @@ Scriptul poate fi lipit de oricate ori in aceeasi pagina, nu se incurca singur.
 | comanda | ce face |
 |---|---|
 | `await runAll()` | ruleaza / continua verificarea |
+| `await runAll({action:'x'})` | forteaza o anumita actiune reCAPTCHA |
+| `diagnose()` | ce reCAPTCHA e in pagina si ce parametri s-au gasit |
 | `progres()` | cate sunt gata, cate au esuat, cate au ramas |
 | `downloadCsv()` | exporta rezultatele ca CSV |
 | `downloadJson()` | exporta raspunsurile brute |
@@ -76,11 +97,20 @@ Editeaza `CONFIG` din capul fisierului:
 | `delayMs` | `2500` | pauza intre cereri |
 | `maxRetries` | `2` | reincercari per placuta |
 
-## Daca prima cerere e respinsa
+## Daca nu merge
 
-Scriptul se opreste imediat, nu bate degeaba in API de 99 de ori. Cel mai
-probabil captura nu a prins actiunea corecta: mai verifica o placuta manual din
-formular (asta rearmeaza captura) si da din nou `runAll()`.
+Ruleaza `diagnose()` - arata ce e in pagina. Cazuri uzuale:
+
+- **`siteKeyGasit: null`** - nu esti pe pagina formularului, sau reCAPTCHA nu
+  s-a incarcat inca. Asteapta sa se incarce complet si reia.
+- **niciun candidat acceptat** - actiunea nu e in bundle sub o forma pe care o
+  recunoaste regexul. Verifica o placuta manual din formular (poate o prinde
+  hookul), altfel forteaz-o cu `runAll({ action: "..." })`.
+- **In Brave**, `requestStorageAccess: Permission denied` in consola inseamna ca
+  Shields blocheaza storage-ul pentru iframeul reCAPTCHA. De obicei merge
+  oricum; daca nu, coboara Shields pentru site sau incearca in Chrome.
+
+Scriptul se opreste la prima cerere respinsa, nu bate degeaba in API de 99 de ori.
 
 ## Forma cererii (referinta)
 

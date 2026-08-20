@@ -4,9 +4,11 @@
  * Cum se ruleaza:
  *   1. Deschide https://dgpci.mai.gov.ro/ si mergi pe formularul de verificare placute.
  *   2. F12 -> Console. Lipeste tot fisierul asta, Enter.
- *   3. Verifica O SINGURA placuta manual, din formular. Scriptul intercepteaza
- *      apelul si retine singur site key-ul + actiunea reCAPTCHA.
- *   4. Ruleaza:  await runAll()
+ *   3. Ruleaza:  await runAll()
+ *
+ * Site key-ul il ia din iframeul reCAPTCHA, iar actiunea o cauta in bundle-urile
+ * paginii si o confirma incercand-o pe o singura placuta. Daca nu reuseste,
+ * verifica o placuta manual din formular sau da runAll({ action: "..." }).
  *
  * Progresul se salveaza dupa fiecare placuta. Daca se intrerupe (inchizi tabul,
  * browserul incetineste timerele), lipesti scriptul din nou si dai iar runAll() -
@@ -37,17 +39,24 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * ------------------------------------------------------------------ */
 
 /*
- * In loc sa ghicim actiunea reCAPTCHA, ne punem un wrapper peste
- * grecaptcha.execute si lasam site-ul sa ne spuna singur ce foloseste:
- * la prima verificare manuala din formular, interceptam argumentele reale.
- */
-/*
- * Starea capturii sta pe window, nu in closure: daca scriptul e lipit de mai
- * multe ori in aceeasi pagina, patch-ul pus de prima copie trebuie sa scrie
- * intr-un obiect pe care il vad si copiile urmatoare.
+ * In loc sa ghicim parametrii reCAPTCHA, ne punem un wrapper peste
+ * grecaptcha.execute / grecaptcha.render si lasam site-ul sa ne spuna singur ce
+ * foloseste: la prima verificare manuala din formular, interceptam argumentele.
+ *
+ * Acoperim doua variante:
+ *   v3 / Enterprise  ->  execute(siteKey, { action })  returneaza direct tokenul
+ *   v2 invizibil     ->  render(...) da un widgetId; execute(widgetId) porneste
+ *                        verificarea, iar tokenul se citeste cu getResponse()
+ *
+ * Starea sta pe window, nu in closure: daca scriptul e lipit de mai multe ori in
+ * aceeasi pagina, patch-ul pus de prima copie trebuie sa scrie intr-un obiect pe
+ * care il vad si copiile urmatoare.
  */
 const captured = window.__plateCheckCaptured ||
-  (window.__plateCheckCaptured = { siteKey: null, action: null, execute: null });
+  (window.__plateCheckCaptured = {
+    siteKey: null, action: null, widgetId: null,
+    execute: null, reset: null,
+  });
 
 /** API-ul reCAPTCHA folosit de pagina (Enterprise daca exista, altfel clasic). */
 function recaptchaApi() {
@@ -55,37 +64,106 @@ function recaptchaApi() {
 }
 
 function armCapture() {
-  const api = recaptchaApi();
-  if (!api || typeof api.execute !== 'function') return false;
-  if (api.execute.__patched) return true;
+  // Patchuim ambele obiecte: unele pagini au si grecaptcha, si
+  // grecaptcha.enterprise, si nu stim pe care il apeleaza aplicatia.
+  const targets = [window.grecaptcha, window.grecaptcha && window.grecaptcha.enterprise];
+  let armed = false;
 
-  // Pastram referinta nepatchuita: cererile noastre o folosesc direct, ca sa nu
-  // ne interceptam singuri apelurile si sa poluam captura.
-  const original = api.execute.bind(api);
-  captured.execute = original;
+  for (const api of targets) {
+    if (!api || typeof api.execute !== 'function') continue;
+    armed = true;
+    if (api.execute.__patched) continue;
 
-  const wrapper = function (siteKey, opts) {
-    const action = opts && opts.action;
-    if (typeof siteKey === 'string' && siteKey.startsWith('6')) {
-      const isNew = siteKey !== captured.siteKey || action !== captured.action;
-      captured.siteKey = siteKey;
-      if (action) captured.action = action;
-      if (isNew) {
-        console.log('%cCaptat:', 'color:#0a0;font-weight:bold',
-          `siteKey=${siteKey}`, `action=${captured.action}`);
+    // Pastram referintele nepatchuite: cererile noastre le folosesc direct, ca
+    // sa nu ne interceptam singuri apelurile si sa poluam captura.
+    const originalExecute = api.execute.bind(api);
+    if (!captured.execute) captured.execute = originalExecute;
+    if (!captured.reset && typeof api.reset === 'function') captured.reset = api.reset.bind(api);
+
+    const executeWrapper = function (first, opts) {
+      const action = opts && opts.action;
+      if (typeof first === 'string' && first.startsWith('6')) {
+        const isNew = first !== captured.siteKey || action !== captured.action;
+        captured.siteKey = first;
+        if (action) captured.action = action;
+        if (isNew) {
+          console.log('%cCaptat (v3):', 'color:#0a0;font-weight:bold',
+            `siteKey=${first}`, `action=${captured.action}`);
+        }
+      } else if (first !== undefined && captured.widgetId !== first) {
+        captured.widgetId = first;
+        console.log('%cCaptat (v2):', 'color:#0a0;font-weight:bold', `widgetId=${first}`);
       }
+      return originalExecute(first, opts);
+    };
+    executeWrapper.__patched = true;
+    api.execute = executeWrapper;
+
+    if (typeof api.render === 'function' && !api.render.__patched) {
+      const originalRender = api.render.bind(api);
+      const renderWrapper = function (container, params) {
+        const widgetId = originalRender(container, params);
+        if (params && params.sitekey) {
+          captured.siteKey = captured.siteKey || params.sitekey;
+          captured.widgetId = widgetId;
+          console.log('%cCaptat (render):', 'color:#0a0;font-weight:bold',
+            `siteKey=${params.sitekey}`, `widgetId=${widgetId}`, `size=${params.size}`);
+        }
+        return widgetId;
+      };
+      renderWrapper.__patched = true;
+      api.render = renderWrapper;
     }
-    return original(siteKey, opts);
-  };
-  wrapper.__patched = true;
-  api.execute = wrapper;
-  return true;
+  }
+
+  return armed;
+}
+
+/*
+ * Fallback cand hookul nu prinde niciodata: aplicatiile Angular isi tin de
+ * obicei o referinta la execute de la incarcare, dinainte sa apucam noi sa
+ * punem wrapperul, asa ca apelul nu mai trece prin el. Atunci cautam actiunea
+ * direct in bundle-urile lor - sunt same-origin, deci le putem citi.
+ */
+async function findActionsInBundles() {
+  const urls = [...document.querySelectorAll('script[src]')]
+    .map((s) => s.src)
+    .filter((u) => { try { return new URL(u).origin === location.origin; } catch { return false; } });
+
+  const found = new Set();
+
+  for (const url of urls) {
+    let text;
+    try { text = await (await fetch(url)).text(); }
+    catch { continue; }
+
+    // execute(<ceva>, { action: "..." })  - forma cea mai sigura
+    for (const m of text.matchAll(/execute\s*\([^,()]{0,80},\s*\{\s*action\s*:\s*["'`]([\w.\-\/]+)["'`]/g)) {
+      found.add(m[1]);
+    }
+    // orice { action: "..." } - mai zgomotos, il punem dupa
+    for (const m of text.matchAll(/\baction\s*:\s*["'`]([\w.\-\/]{3,40})["'`]/g)) {
+      found.add(m[1]);
+    }
+  }
+
+  const list = [...found];
+  console.log(`Actiuni gasite in bundle: ${list.length ? list.join(', ') : '(niciuna)'}`);
+  return list;
 }
 
 /** Site key-ul se poate afla si din DOM, fara verificare manuala. Actiunea nu. */
 function sniffSiteKey() {
   const el = document.querySelector('[data-sitekey]');
   if (el) return el.getAttribute('data-sitekey');
+
+  // Iframe-ul reCAPTCHA are site key-ul in query string: .../anchor?ar=1&k=6Le...
+  for (const f of document.querySelectorAll('iframe[src*="recaptcha"]')) {
+    try {
+      const k = new URL(f.src).searchParams.get('k');
+      if (k) return k;
+    } catch { /* src invalid, ignoram */ }
+  }
 
   for (const s of document.querySelectorAll('script[src*="recaptcha"]')) {
     const m = s.src.match(/[?&]render=([^&]+)/);
@@ -94,12 +172,71 @@ function sniffSiteKey() {
   return null;
 }
 
-async function getToken() {
+/** Ce fel de reCAPTCHA e in pagina - util cand captura nu prinde. */
+function diagnose() {
+  const api = recaptchaApi();
+  const frames = [...document.querySelectorAll('iframe[src*="recaptcha"]')].map((f) => {
+    try {
+      const u = new URL(f.src);
+      return { path: u.pathname, k: u.searchParams.get('k'), size: u.searchParams.get('size') };
+    } catch { return { src: f.src }; }
+  });
+
+  const info = {
+    grecaptcha: !!window.grecaptcha,
+    enterprise: !!(window.grecaptcha && window.grecaptcha.enterprise),
+    metode: api ? Object.keys(api).filter((k) => typeof api[k] === 'function') : [],
+    iframes: frames,
+    siteKeyGasit: captured.siteKey || sniffSiteKey(),
+    actiuneCaptata: captured.action,
+    widgetId: captured.widgetId,
+    hookActiv: !!(window.grecaptcha && window.grecaptcha.execute && window.grecaptcha.execute.__patched),
+    hookActivEnterprise: !!(window.grecaptcha && window.grecaptcha.enterprise &&
+      window.grecaptcha.enterprise.execute && window.grecaptcha.enterprise.execute.__patched),
+  };
+  console.log('%cDiagnostic reCAPTCHA', 'color:#06c;font-weight:bold');
+  console.log(info);
+  console.log(
+    frames.some((f) => (f.path || '').includes('/enterprise/'))
+      ? 'Pare reCAPTCHA Enterprise.'
+      : 'Pare reCAPTCHA clasic (api2).'
+  );
+  return info;
+}
+
+async function getToken(actionOverride) {
   const api = recaptchaApi();
   if (!api) throw new Error('grecaptcha nu e incarcat in pagina.');
   await new Promise((resolve) => api.ready(resolve));
+
   const execute = captured.execute || api.execute.bind(api);
-  return execute(captured.siteKey, { action: captured.action });
+
+  // v3 / Enterprise: tokenul vine direct din promisiune.
+  const action = actionOverride || captured.action;
+  if (captured.siteKey && action) {
+    return execute(captured.siteKey, { action });
+  }
+
+  // v2 invizibil: pornim verificarea si asteptam sa apara raspunsul.
+  if (captured.widgetId !== null && typeof api.getResponse === 'function') {
+    if (captured.reset) captured.reset(captured.widgetId);
+    execute(captured.widgetId);
+
+    const deadline = Date.now() + 30000;
+    for (;;) {
+      const token = api.getResponse(captured.widgetId);
+      if (token) return token;
+      if (Date.now() > deadline) {
+        throw new Error(
+          'Timeout la reCAPTCHA v2 - probabil cere click uman pentru fiecare verificare, ' +
+          'caz in care rularea in lot nu e posibila.'
+        );
+      }
+      await sleep(300);
+    }
+  }
+
+  throw new Error('Nu am parametrii reCAPTCHA. Ruleaza diagnose().');
 }
 
 /* ------------------------------------------------------------------ *
@@ -114,7 +251,7 @@ function buildPlates() {
   return plates;
 }
 
-async function checkPlate(plateNumber) {
+async function checkPlate(plateNumber, action) {
   const res = await fetch(CONFIG.endpoint, {
     method: 'POST',
     credentials: 'include',
@@ -123,7 +260,7 @@ async function checkPlate(plateNumber) {
       plateNumber,
       userEmail: CONFIG.userEmail,
       language: CONFIG.language,
-      reCaptchaKey: await getToken(),
+      reCaptchaKey: await getToken(action),
     }),
   });
 
@@ -163,17 +300,70 @@ function remaining() {
  * Rulare
  * ------------------------------------------------------------------ */
 
-async function runAll() {
+/** Actiunile plauzibile primele, ca sa nimerim din prima incercare. */
+function rankActions(list) {
+  const scor = (a) => {
+    const x = a.toLowerCase();
+    if (/plate|placu|numar/.test(x)) return 0;
+    if (/status|verif|check|search/.test(x)) return 1;
+    if (/submit|form/.test(x)) return 2;
+    return 3;
+  };
+  return [...list].sort((a, b) => scor(a) - scor(b)).slice(0, 8);
+}
+
+/*
+ * Cand nu stim actiunea, o deducem incercand candidatii pe o singura placuta.
+ * Costa cel mult cateva cereri, nu 99, si se opreste la prima care trece.
+ */
+async function resolveAction(candidates, plate) {
+  console.log(`Incerc sa deduc actiunea reCAPTCHA pe ${plate}: ${candidates.join(', ')}`);
+
+  for (const action of candidates) {
+    try {
+      const body = await checkPlate(plate, action);
+      console.log(`%cActiunea corecta: ${action}`, 'color:#0a0;font-weight:bold');
+      return { action, body };
+    } catch (e) {
+      console.warn(`  ${action} -> respins (${e.message})`);
+      await sleep(CONFIG.delayMs);
+    }
+  }
+
+  console.error(
+    'Niciun candidat nu a fost acceptat.\nRuleaza diagnose() si trimite ce afiseaza.'
+  );
+  return null;
+}
+
+async function runAll(opts = {}) {
   armCapture();
 
   if (!captured.siteKey) captured.siteKey = sniffSiteKey();
+  if (opts.action) captured.action = opts.action;
 
-  if (!captured.siteKey || !captured.action) {
+  const v2 = captured.widgetId !== null;
+
+  // Fara actiune captata, o cautam in bundle-urile lor.
+  let candidates = [];
+  if (!captured.action && !v2 && captured.siteKey) {
+    candidates = rankActions(await findActionsInBundles());
+  }
+
+  if (!captured.siteKey && !v2) {
     console.warn(
-      '%cLipsesc parametrii reCAPTCHA.',
-      'color:#c00;font-weight:bold',
-      '\nVerifica O SINGURA placuta manual, din formularul paginii.' +
-      '\nScriptul prinde singur site key-ul si actiunea, apoi dai din nou: await runAll()'
+      '%cNu gasesc site key-ul reCAPTCHA.', 'color:#c00;font-weight:bold',
+      '\nEsti pe pagina formularului de verificare placute? Ruleaza diagnose().'
+    );
+    return;
+  }
+
+  if (!captured.action && !v2 && !candidates.length) {
+    console.warn(
+      '%cNu am actiunea reCAPTCHA.', 'color:#c00;font-weight:bold',
+      '\nVerifica o placuta manual din formular (poate o prinde hookul),' +
+      '\nsau dai direct:  await runAll({ action: "numele_actiunii" })' +
+      '\nRuleaza diagnose() ca sa vezi ce e in pagina.'
     );
     return;
   }
@@ -187,7 +377,21 @@ async function runAll() {
   }
 
   console.log(`De verificat: ${todo.length} din ${total} (restul sunt deja salvate).`);
-  console.log(`siteKey=${captured.siteKey} action=${captured.action}`);
+
+  if (!captured.action && !v2) {
+    const rezolvat = await resolveAction(candidates, todo[0]);
+    if (!rezolvat) return;
+
+    captured.action = rezolvat.action;
+    const store = load();
+    store[todo[0]] = { plate: todo[0], ok: true, response: rezolvat.body, at: Date.now() };
+    save(store);
+    todo.shift();
+    if (!todo.length) { console.log('Gata, toate.'); return load(); }
+    await sleep(CONFIG.delayMs);
+  }
+
+  console.log(`siteKey=${captured.siteKey} action=${captured.action} widgetId=${captured.widgetId}`);
 
   for (let i = 0; i < todo.length; i++) {
     const plate = todo[i];
@@ -196,7 +400,7 @@ async function runAll() {
 
     for (;;) {
       try {
-        const body = await checkPlate(plate);
+        const body = await checkPlate(plate, captured.action);
         store[plate] = { plate, ok: true, response: body, at: Date.now() };
         save(store);
         console.log(`[${i + 1}/${todo.length}] ${plate}`, body);
@@ -300,7 +504,7 @@ function downloadJson(filename = 'plate-status.json') {
  * Expunere in consola
  * ------------------------------------------------------------------ */
 
-Object.assign(window, { runAll, progres, reset, downloadCsv, downloadJson });
+Object.assign(window, { runAll, progres, reset, downloadCsv, downloadJson, diagnose, findActionsInBundles });
 window.plateCheck = { CONFIG, captured, remaining, buildPlates };
 
 /* ------------------------------------------------------------------ */
@@ -308,9 +512,11 @@ window.plateCheck = { CONFIG, captured, remaining, buildPlates };
 if (armCapture()) {
   console.log(
     '%cIncarcat.', 'color:#0a0;font-weight:bold',
-    '\n1. Verifica o placuta manual din formular (o singura data) - ca sa captez parametrii reCAPTCHA.' +
-    '\n2. Apoi:  await runAll()' +
-    '\n\nAltele:  progres()  downloadCsv()  downloadJson()  reset()'
+    '\n\nRuleaza direct:  await runAll()' +
+    '\nIsi gaseste singur site key-ul si actiunea reCAPTCHA.' +
+    '\n\nDaca se plange ca nu le gaseste, verifica o placuta manual din formular' +
+    '\n(hookul o prinde), sau forteaza:  await runAll({ action: "..." })' +
+    '\n\nAltele:  diagnose()  progres()  downloadCsv()  downloadJson()  reset()'
   );
 } else {
   console.warn('grecaptcha nu e in pagina. Esti pe formularul de verificare placute?');
