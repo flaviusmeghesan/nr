@@ -20,8 +20,12 @@ tiparul ala drept bot, deci nici nu ar functiona.
 
 1. Deschide <https://dgpci.mai.gov.ro/> si navigheaza la formularul de
    verificare a placutei.
-2. F12 -> tab-ul **Console**. Lipeste continutul din
-   [`browser-console.js`](browser-console.js) si Enter.
+2. Deschide consola: **F12** (sau click dreapta -> *Inspect* / *Inspecteaza*),
+   apoi tab-ul **Console**.
+   Lipeste continutul din [`browser-console.js`](browser-console.js) si Enter.
+
+   > Prima data cand lipesti ceva in consola, Chrome/Brave refuza si iti cere
+   > sa scrii `allow pasting` + Enter. Scrii asta o data, apoi lipesti din nou.
 3. **Verifica o singura placuta manual, din formular.** Scriptul intercepteaza
    apelul paginii catre `grecaptcha.execute` si retine singur site key-ul si
    actiunea - nu mai trebuie sa cauti nimic prin bundle.
@@ -49,13 +53,14 @@ de unde a ramas si reincearca doar placutele esuate. Nu reia de la capat si nu
 trimite cereri duplicate.
 
 Nu mai conteaza deci daca tabul sta vizibil sau nu - in cel mai rau caz reiei.
+Scriptul poate fi lipit de oricate ori in aceeasi pagina, nu se incurca singur.
 
 ## Comenzi
 
 | comanda | ce face |
 |---|---|
 | `await runAll()` | ruleaza / continua verificarea |
-| `status()` | cate sunt gata, cate au esuat, cate au ramas |
+| `progres()` | cate sunt gata, cate au esuat, cate au ramas |
 | `downloadCsv()` | exporta rezultatele ca CSV |
 | `downloadJson()` | exporta raspunsurile brute |
 | `reset()` | sterge progresul salvat |

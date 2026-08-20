@@ -13,6 +13,8 @@
  * continua de unde a ramas, nu reia de la capat.
  */
 
+(function () {
+
 const CONFIG = {
   endpoint: 'https://dgpci.mai.gov.ro/drpciv-forms-api/plate-status',
   prefix: 'MS',
@@ -39,7 +41,13 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
  * grecaptcha.execute si lasam site-ul sa ne spuna singur ce foloseste:
  * la prima verificare manuala din formular, interceptam argumentele reale.
  */
-const captured = { siteKey: null, action: null, execute: null };
+/*
+ * Starea capturii sta pe window, nu in closure: daca scriptul e lipit de mai
+ * multe ori in aceeasi pagina, patch-ul pus de prima copie trebuie sa scrie
+ * intr-un obiect pe care il vad si copiile urmatoare.
+ */
+const captured = window.__plateCheckCaptured ||
+  (window.__plateCheckCaptured = { siteKey: null, action: null, execute: null });
 
 /** API-ul reCAPTCHA folosit de pagina (Enterprise daca exista, altfel clasic). */
 function recaptchaApi() {
@@ -231,7 +239,7 @@ async function runAll() {
   return load();
 }
 
-function status() {
+function progres() {
   const store = load();
   const done = Object.values(store).filter((r) => r.ok).length;
   const failed = Object.values(store).filter((r) => !r.ok).length;
@@ -288,6 +296,13 @@ function downloadJson(filename = 'plate-status.json') {
   download(filename, JSON.stringify(rows, null, 2), 'application/json');
 }
 
+/* ------------------------------------------------------------------ *
+ * Expunere in consola
+ * ------------------------------------------------------------------ */
+
+Object.assign(window, { runAll, progres, reset, downloadCsv, downloadJson });
+window.plateCheck = { CONFIG, captured, remaining, buildPlates };
+
 /* ------------------------------------------------------------------ */
 
 if (armCapture()) {
@@ -295,8 +310,10 @@ if (armCapture()) {
     '%cIncarcat.', 'color:#0a0;font-weight:bold',
     '\n1. Verifica o placuta manual din formular (o singura data) - ca sa captez parametrii reCAPTCHA.' +
     '\n2. Apoi:  await runAll()' +
-    '\n\nAltele:  status()  downloadCsv()  downloadJson()  reset()'
+    '\n\nAltele:  progres()  downloadCsv()  downloadJson()  reset()'
   );
 } else {
   console.warn('grecaptcha nu e in pagina. Esti pe formularul de verificare placute?');
 }
+
+})();
