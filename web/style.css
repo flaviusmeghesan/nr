@@ -199,3 +199,10 @@ dialog label input, dialog label select, dialog label textarea { width: 100%; ma
   .filters { margin-left: 0; width: 100%; }
   .grid2, .grid-form { grid-template-columns: 1fr; }
 }
+
+/* ---------------------------------------------------------------- tinte min-max */
+td.target-cell { white-space: nowrap; }
+td.target-cell input { width: 52px; }
+td.target-cell .dash { color: var(--muted); margin: 0 3px; }
+table.targets thead th:not(:first-child) { text-align: center; }
+details summary::-webkit-details-marker { color: var(--muted); }

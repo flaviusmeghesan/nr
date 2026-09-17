@@ -15,8 +15,13 @@ MEDIA_DIR = Path(os.environ.get("TRACKER_MEDIA", ROOT / "media"))
 
 PLATFORMS = ("instagram", "facebook", "tiktok")
 PLATFORM_LABELS = {"instagram": "Instagram", "facebook": "Facebook", "tiktok": "TikTok"}
-CONTENT_TYPES = ("video", "photo", "carousel", "story")
-CONTENT_LABELS = {"video": "Video", "photo": "Poza", "carousel": "Carusel", "story": "Story"}
+CONTENT_TYPES = ("any", "video", "photo", "carousel", "story")
+CONTENT_LABELS = {"any": "Orice postare", "video": "Video", "photo": "Poza",
+                  "carousel": "Carusel", "story": "Story"}
+# 'any' e doar pentru tinte ("4 postari pe saptamana, indiferent de tip").
+POST_CONTENT_TYPES = ("video", "photo", "carousel", "story")
+PERIODS = ("week", "month")
+PERIOD_LABELS = {"week": "saptamana", "month": "luna"}
 STATUSES = ("idea", "planned", "scheduled", "posted")
 STATUS_LABELS = {"idea": "Idee", "planned": "Planificat",
                  "scheduled": "Programat", "posted": "Postat"}
@@ -52,14 +57,27 @@ CREATE TABLE IF NOT EXISTS members (
     active INTEGER NOT NULL DEFAULT 1
 );
 
+-- O tinta se poate pune fie pe un cont anume, fie pe client (adica pe toate
+-- platformele lui la un loc - cazul obisnuit cand acelasi material se publica
+-- peste tot si se numara o singura data). `period` e 'week' sau 'month', iar
+-- `period_key` e '*' pentru o tinta recurenta, sau '2026-W38' / '2026-09'
+-- pentru o valoare valabila doar in perioada aia.
 CREATE TABLE IF NOT EXISTS targets (
     id           INTEGER PRIMARY KEY,
-    account_id   INTEGER NOT NULL REFERENCES accounts(id) ON DELETE CASCADE,
-    week         TEXT NOT NULL,
+    client_id    INTEGER REFERENCES clients(id) ON DELETE CASCADE,
+    account_id   INTEGER REFERENCES accounts(id) ON DELETE CASCADE,
+    period       TEXT NOT NULL DEFAULT 'week',
+    period_key   TEXT NOT NULL DEFAULT '*',
     content_type TEXT NOT NULL,
-    target_count INTEGER NOT NULL DEFAULT 0,
-    UNIQUE(account_id, week, content_type)
+    target_min   INTEGER NOT NULL DEFAULT 0,
+    target_max   INTEGER NOT NULL DEFAULT 0,
+    CHECK (client_id IS NOT NULL OR account_id IS NOT NULL)
 );
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_targets_client
+    ON targets(client_id, period, period_key, content_type) WHERE client_id IS NOT NULL;
+CREATE UNIQUE INDEX IF NOT EXISTS idx_targets_account
+    ON targets(account_id, period, period_key, content_type) WHERE account_id IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS posts (
     id           INTEGER PRIMARY KEY,
@@ -67,6 +85,7 @@ CREATE TABLE IF NOT EXISTS posts (
     content_type TEXT NOT NULL DEFAULT 'video',
     status       TEXT NOT NULL DEFAULT 'planned',
     week         TEXT NOT NULL,
+    month        TEXT NOT NULL DEFAULT '',
     planned_for  TEXT NOT NULL DEFAULT '',
     posted_at    TEXT NOT NULL DEFAULT '',
     title        TEXT NOT NULL DEFAULT '',
@@ -77,6 +96,7 @@ CREATE TABLE IF NOT EXISTS posts (
     thumb_url    TEXT NOT NULL DEFAULT '',
     source       TEXT NOT NULL DEFAULT 'manual',
     external_id  TEXT NOT NULL DEFAULT '',
+    content_group TEXT NOT NULL DEFAULT '',
     metrics      TEXT NOT NULL DEFAULT '{}',
     created_at   TEXT NOT NULL,
     updated_at   TEXT NOT NULL
@@ -86,6 +106,8 @@ CREATE INDEX IF NOT EXISTS idx_posts_week ON posts(week);
 CREATE INDEX IF NOT EXISTS idx_posts_account ON posts(account_id, week);
 CREATE UNIQUE INDEX IF NOT EXISTS idx_posts_external
     ON posts(account_id, external_id) WHERE external_id <> '';
+CREATE INDEX IF NOT EXISTS idx_posts_group ON posts(content_group);
+CREATE INDEX IF NOT EXISTS idx_posts_month ON posts(month);
 
 -- Maparea de coloane CSV -> campuri interne, salvata per platforma, ca sa nu
 -- o refaci de fiecare data cand exporti din Business Suite / TikTok Studio.
@@ -130,9 +152,48 @@ def connect() -> sqlite3.Connection:
 
 def init_db() -> sqlite3.Connection:
     conn = connect()
+    migrate(conn)
     conn.executescript(SCHEMA)
     conn.commit()
     return conn
+
+
+def _columns(conn: sqlite3.Connection, table: str) -> set[str]:
+    try:
+        return {row[1] for row in conn.execute(f"PRAGMA table_info({table})")}
+    except sqlite3.Error:
+        return set()
+
+
+def migrate(conn: sqlite3.Connection) -> None:
+    """Aduce o baza mai veche la schema curenta, pastrand datele.
+
+    Se ruleaza inainte de SCHEMA (care e doar CREATE IF NOT EXISTS si deci nu
+    modifica tabele existente).
+    """
+    posts_cols = _columns(conn, "posts")
+    if posts_cols and "content_group" not in posts_cols:
+        conn.execute("ALTER TABLE posts ADD COLUMN content_group TEXT NOT NULL DEFAULT ''")
+    if posts_cols and "month" not in posts_cols:
+        conn.execute("ALTER TABLE posts ADD COLUMN month TEXT NOT NULL DEFAULT ''")
+        # completam luna din datele deja existente
+        conn.execute("UPDATE posts SET month = substr("
+                     "COALESCE(NULLIF(posted_at, ''), planned_for), 1, 7) "
+                     "WHERE month = ''")
+
+    targets_cols = _columns(conn, "targets")
+    if targets_cols and "target_count" in targets_cols:
+        # Schema veche: tinte doar pe cont, doar saptamanale, doar numar fix.
+        conn.execute("ALTER TABLE targets RENAME TO targets_old")
+        conn.executescript(SCHEMA)
+        conn.execute("""
+            INSERT INTO targets (account_id, period, period_key, content_type,
+                                 target_min, target_max)
+            SELECT account_id, 'week', week, content_type, target_count, target_count
+            FROM targets_old
+        """)
+        conn.execute("DROP TABLE targets_old")
+    conn.commit()
 
 
 def reset_thread_state() -> None:

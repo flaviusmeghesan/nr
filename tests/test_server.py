@@ -72,7 +72,7 @@ class ApiCrudTests(ServerTestCase):
         self.assertEqual(status, 200)
 
         status, _ = self.call("POST", "/api/targets", {
-            "account_id": account["id"], "content_type": "video", "target_count": 4})
+            "account_id": account["id"], "content_type": "video", "target_min": 4})
         self.assertEqual(status, 200)
 
         status, post = self.call("POST", "/api/posts", {

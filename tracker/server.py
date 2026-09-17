@@ -12,8 +12,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, unquote, urlparse
 
 from . import db, sources, store, weeks
-from .db import (CONTENT_LABELS, CONTENT_TYPES, PLATFORM_LABELS, PLATFORMS,
-                 STATUS_LABELS, STATUSES)
+from .db import (CONTENT_LABELS, CONTENT_TYPES, PERIOD_LABELS, PERIODS, PLATFORM_LABELS,
+                 PLATFORMS, POST_CONTENT_TYPES, STATUS_LABELS, STATUSES)
 
 WEB_DIR = Path(__file__).resolve().parent.parent / "web"
 MAX_UPLOAD = 512 * 1024 * 1024  # 512 MB, cat un video lung
@@ -38,6 +38,9 @@ def api_bootstrap(_params, _body) -> dict:
         "today": date.today().isoformat(),
         "platforms": [{"value": p, "label": PLATFORM_LABELS[p]} for p in PLATFORMS],
         "content_types": [{"value": c, "label": CONTENT_LABELS[c]} for c in CONTENT_TYPES],
+        "post_content_types": [{"value": c, "label": CONTENT_LABELS[c]}
+                               for c in POST_CONTENT_TYPES],
+        "periods": [{"value": p, "label": PERIOD_LABELS[p]} for p in PERIODS],
         "statuses": [{"value": s, "label": STATUS_LABELS[s]} for s in STATUSES],
     }
 
@@ -104,6 +107,58 @@ def api_import_commit(payload: dict) -> dict:
     return result
 
 
+def api_add_from_link(payload: dict) -> dict:
+    """Adauga un cont dintr-un simplu link de profil, fara sa completezi nimic.
+
+    Recunoaste platforma si handle-ul din URL; clientul se creeaza daca nu exista.
+    """
+    link = str(payload.get("url") or "").strip()
+    parsed = sources.scraper.parse_profile_url(link)
+    if not parsed:
+        raise ApiError(
+            "Nu recunosc linkul. Trebuie sa fie un profil de Instagram, Facebook sau "
+            "TikTok (ex. https://www.instagram.com/numepagina/).")
+
+    client_id = _int_value(payload.get("client_id"))
+    client_name = str(payload.get("client_name") or "").strip()
+    if client_id:
+        client = store.get_client(client_id)
+        if not client:
+            raise ApiError("Clientul ales nu exista.")
+    elif client_name:
+        client = (db.query_one("SELECT * FROM clients WHERE name = ? COLLATE NOCASE",
+                               (client_name,))
+                  or store.create_client({"name": client_name}))
+    else:
+        raise ApiError("Alege un client sau scrie numele unuia nou.")
+
+    existing = db.query_one(
+        "SELECT * FROM accounts WHERE client_id = ? AND platform = ? AND handle = ?",
+        (client["id"], parsed["platform"], parsed["handle"]))
+    if existing:
+        return {"account": store.get_account(existing["id"]), "created": False,
+                "client": client}
+
+    account = store.create_account({
+        "client_id": client["id"], "platform": parsed["platform"],
+        "handle": parsed["handle"]})
+    return {"account": account, "created": True, "client": client}
+
+
+def _int_value(raw) -> int | None:
+    try:
+        return int(raw) if raw not in (None, "") else None
+    except (TypeError, ValueError):
+        return None
+
+
+def api_scraper_status(_params, _body) -> dict:
+    available, hint = sources.scraper.is_available()
+    return {"available": available, "hint": hint,
+            "profile_dir": str(sources.scraper.PROFILE_DIR),
+            "logged_in": sources.scraper.PROFILE_DIR.exists()}
+
+
 def api_upload(body: bytes, params) -> dict:
     raw_name = _str(params, "filename") or "fisier"
     name = safe_filename(raw_name)
@@ -150,8 +205,9 @@ ROUTES = [
     ("POST",   r"^/api/members$",          lambda m, p, b: store.create_member(b)),
     ("DELETE", r"^/api/members/(\d+)$",    lambda m, p, b: _deleted(store.delete_member, m[0])),
 
-    ("GET",    r"^/api/targets$",          lambda m, p, b: {"targets": store.list_targets(_int(p, "account_id"))}),
+    ("GET",    r"^/api/targets$",          lambda m, p, b: {"targets": store.list_targets(_int(p, "client_id"), _int(p, "account_id"))}),
     ("POST",   r"^/api/targets$",          lambda m, p, b: store.set_target(b)),
+    ("DELETE", r"^/api/targets/(\d+)$",    lambda m, p, b: _deleted(store.delete_target, m[0])),
 
     ("GET",    r"^/api/posts$",            lambda m, p, b: api_posts(p, b)),
     ("POST",   r"^/api/posts$",            lambda m, p, b: store.create_post(b)),
@@ -159,6 +215,8 @@ ROUTES = [
     ("DELETE", r"^/api/posts/(\d+)$",      lambda m, p, b: _deleted(store.delete_post, m[0])),
 
     ("POST",   r"^/api/sync/(\d+)$",       lambda m, p, b: api_sync(int(m[0]))),
+    ("POST",   r"^/api/accounts/from-link$", lambda m, p, b: api_add_from_link(b)),
+    ("GET",    r"^/api/scraper/status$",   lambda m, p, b: api_scraper_status(p, b)),
 
     ("POST",   r"^/api/import/commit$",    lambda m, p, b: api_import_commit(b)),
     ("GET",    r"^/api/import-profiles$",  lambda m, p, b: {"profiles": store.list_import_profiles()}),

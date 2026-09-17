@@ -62,6 +62,7 @@ async function init() {
   wirePostDialog();
   wireSettings();
   wireImport();
+  wireAddFromLink();
   await refreshAll();
 }
 
@@ -150,43 +151,55 @@ async function renderDashboard() {
     return;
   }
 
-  $("#dashboardBody").innerHTML = data.clients.map((client) => `
+  $("#dashboardBody").innerHTML = data.clients.map((client) => {
+    const accountCards = client.accounts.map(renderAccountCard).join("");
+    return `
     <div class="client-block">
       <div class="client-head">
         <h2>${esc(client.name)}</h2>
-        <span class="count">${client.totals.posted}/${client.totals.target} postate</span>
+        <span class="count">${client.totals.posted}/${client.totals.target} realizate</span>
       </div>
-      <div class="accounts">
-        ${client.accounts.map(renderAccountCard).join("")}
+      ${client.rows.length ? `
+        <div class="account" style="margin-bottom:12px">
+          <div class="account-head">
+            <span class="pill">Plan pe client</span>
+            <span class="handle">acelasi material pe toate retelele se numara o data</span>
+          </div>
+          ${client.rows.map(renderGoalRow).join("")}
+        </div>` : ""}
+      ${accountCards ? `<div class="accounts">${accountCards}</div>` : ""}
+    </div>`;
+  }).join("");
+}
+
+function renderGoalRow(row) {
+  const target = row.is_range ? `${row.target_min}-${row.target_max}` : `${row.target_min}`;
+  const pct = row.target_min ? Math.min(100, Math.round((row.posted / row.target_min) * 100)) : 0;
+  const planPct = row.target_min
+    ? Math.min(100 - pct, Math.round((row.planned / row.target_min) * 100)) : 0;
+  return `
+    <div class="goal">
+      <div class="goal-top">
+        <span>${esc(row.label)} <span class="left">/ ${esc(row.period_label)}</span></span>
+        <span class="num"><b>${row.posted}</b> / ${target}
+          ${row.planned ? `<span class="left"> · ${row.planned} in lucru</span>` : ""}</span>
       </div>
-    </div>
-  `).join("");
+      <div class="bar ${row.done ? "full" : ""}">
+        <i class="done" style="width:${pct}%"></i>
+        <i class="plan" style="width:${planPct}%"></i>
+      </div>
+    </div>`;
 }
 
 function renderAccountCard(account) {
+  if (!account.rows.length) return "";
   return `
     <div class="account">
       <div class="account-head">
         <span class="pill ${account.platform}">${esc(account.platform_label)}</span>
         <span class="handle">${esc(account.handle)}</span>
       </div>
-      ${account.rows.map((row) => {
-        const pct = row.target ? Math.min(100, Math.round((row.posted / row.target) * 100)) : 0;
-        const planPct = row.target ? Math.min(100 - pct, Math.round((row.planned / row.target) * 100)) : 0;
-        const barClass = row.target && row.posted >= row.target ? "full" : "";
-        return `
-        <div class="goal">
-          <div class="goal-top">
-            <span>${esc(row.label)}</span>
-            <span class="num"><b>${row.posted}</b>${row.target ? ` / ${row.target}` : ""}
-              ${row.planned ? `<span class="left"> · ${row.planned} in lucru</span>` : ""}</span>
-          </div>
-          <div class="bar ${barClass}">
-            <i class="done" style="width:${row.target ? pct : (row.posted ? 100 : 0)}%"></i>
-            <i class="plan" style="width:${row.target ? planPct : 0}%"></i>
-          </div>
-        </div>`;
-      }).join("")}
+      ${account.rows.map(renderGoalRow).join("")}
     </div>`;
 }
 
@@ -248,7 +261,7 @@ $("#allWeeks").addEventListener("change", (e) => { state.allWeeks = e.target.che
 function wirePostDialog() {
   const dialog = $("#postDialog");
   const form = $("#postForm");
-  fillSelect(form.content_type, state.boot.content_types, { value: "value", text: "label" });
+  fillSelect(form.content_type, state.boot.post_content_types, { value: "value", text: "label" });
   fillSelect(form.status, state.boot.statuses, { value: "value", text: "label" });
 
   $("#cancelPost").addEventListener("click", () => dialog.close());
@@ -371,6 +384,9 @@ async function renderSettings() {
   await renderTargets();
   renderSyncList();
   refreshImportPickers();
+  fillSelect($("#linkClient"), state.boot.clients,
+    { value: "id", text: "name", placeholder: "Client existent..." });
+  refreshScraperStatus();
 }
 
 function renderClientList() {
@@ -424,55 +440,90 @@ function renderMemberList() {
 }
 
 async function renderTargets() {
-  if (!state.boot.accounts.length) {
-    $("#targetsBody").innerHTML = `<p class="hint">Adauga un cont ca sa-i setezi planul.</p>`;
+  if (!state.boot.clients.length) {
+    $("#targetsBody").innerHTML = `<p class="hint">Adauga un client ca sa-i setezi planul.</p>`;
     return;
   }
   const { targets } = await api("GET", "/api/targets");
-  const byAccount = {};
-  for (const t of targets) (byAccount[t.account_id] ??= {})[`${t.week}:${t.content_type}`] = t.target_count;
+  const key = (t) => `${t.period}:${t.period_key}:${t.content_type}`;
+  const byClient = {}, byAccount = {};
+  for (const t of targets) {
+    const bucket = t.client_id ? (byClient[t.client_id] ??= {}) : (byAccount[t.account_id] ??= {});
+    bucket[key(t)] = t;
+  }
 
-  $("#targetsBody").innerHTML = state.boot.accounts.map((a) => `
-    <div class="account-targets" style="margin-bottom:16px">
-      <div class="acc" style="font-weight:600;margin-bottom:6px">
-        ${esc(a.client_name)} · <span class="pill ${a.platform}">${esc(a.platform_label)}</span> ${esc(a.handle)}
-      </div>
-      <table class="targets">
-        <thead><tr><th></th>${state.boot.content_types.map((c) => `<th>${esc(c.label)}</th>`).join("")}</tr></thead>
-        <tbody>
-          <tr>
-            <td>Implicit (orice saptamana)</td>
-            ${state.boot.content_types.map((c) => `
-              <td><input type="number" min="0" data-account="${a.id}" data-week="*" data-type="${c.value}"
-                value="${(byAccount[a.id]?.[`*:${c.value}`]) ?? 0}"></td>`).join("")}
-          </tr>
-          <tr>
-            <td>Doar ${esc(state.week)}</td>
-            ${state.boot.content_types.map((c) => `
-              <td><input type="number" min="0" data-account="${a.id}" data-week="${state.week}" data-type="${c.value}"
-                value="${(byAccount[a.id]?.[`${state.week}:${c.value}`]) ?? ""}" placeholder="—"></td>`).join("")}
-          </tr>
-        </tbody>
-      </table>
-    </div>`).join("");
+  const cell = (owner, ownerId, contentType, period) => {
+    const store = owner === "client" ? byClient : byAccount;
+    const t = (store[ownerId] || {})[`${period}:*:${contentType}`] || {};
+    return `
+      <td class="target-cell">
+        <input type="number" min="0" placeholder="-" value="${t.target_min ?? ""}"
+          data-owner="${owner}" data-id="${ownerId}" data-type="${contentType}"
+          data-period="${period}" data-bound="min">
+        <span class="dash">-</span>
+        <input type="number" min="0" placeholder="=" value="${
+          t.target_max && t.target_max !== t.target_min ? t.target_max : ""}"
+          data-owner="${owner}" data-id="${ownerId}" data-type="${contentType}"
+          data-period="${period}" data-bound="max">
+      </td>`;
+  };
+
+  const table = (owner, ownerId, types) => `
+    <table class="targets">
+      <thead><tr><th></th><th>Pe saptamana</th><th>Pe luna</th></tr></thead>
+      <tbody>${types.map((c) => `
+        <tr>
+          <td>${esc(c.label)}</td>
+          ${cell(owner, ownerId, c.value, "week")}
+          ${cell(owner, ownerId, c.value, "month")}
+        </tr>`).join("")}</tbody>
+    </table>`;
+
+  $("#targetsBody").innerHTML = state.boot.clients.map((client) => {
+    const accounts = state.boot.accounts.filter((a) => a.client_id === client.id);
+    return `
+    <div style="margin-bottom:20px">
+      <div style="font-weight:600;margin-bottom:6px">${esc(client.name)}</div>
+      ${table("client", client.id, state.boot.content_types)}
+      ${accounts.length ? `
+        <details style="margin-top:8px">
+          <summary class="hint" style="cursor:pointer">
+            Tinte separate pe o singura platforma (optional)
+          </summary>
+          ${accounts.map((a) => `
+            <div style="margin-top:10px">
+              <div class="sub2"><span class="pill ${a.platform}">${esc(a.platform_label)}</span>
+                ${esc(a.handle)}</div>
+              ${table("account", a.id, state.boot.post_content_types)}
+            </div>`).join("")}
+        </details>` : ""}
+    </div>`;
+  }).join("");
 
   $$("#targetsBody input").forEach((input) => input.addEventListener("change", async () => {
-    await guarded(() => api("POST", "/api/targets", {
-      account_id: Number(input.dataset.account), week: input.dataset.week,
-      content_type: input.dataset.type, target_count: Number(input.value || 0),
-    }));
+    const row = $$(`#targetsBody input[data-owner="${input.dataset.owner}"]` +
+      `[data-id="${input.dataset.id}"][data-type="${input.dataset.type}"]` +
+      `[data-period="${input.dataset.period}"]`);
+    const min = Number(row.find((i) => i.dataset.bound === "min")?.value || 0);
+    const max = Number(row.find((i) => i.dataset.bound === "max")?.value || 0);
+    const payload = {
+      period: input.dataset.period, content_type: input.dataset.type,
+      target_min: min, target_max: max || min,
+    };
+    payload[input.dataset.owner === "client" ? "client_id" : "account_id"] =
+      Number(input.dataset.id);
+    await guarded(() => api("POST", "/api/targets", payload));
     toast("Plan actualizat.", "ok");
   }));
 }
 
 function renderSyncList() {
-  const live = state.boot.accounts.filter((a) => a.platform === "instagram" || a.platform === "facebook");
-  $("#syncList").innerHTML = live.map((a) => `
+  $("#syncList").innerHTML = state.boot.accounts.map((a) => `
     <div class="item">
       <div class="grow">${esc(a.client_name)} · <span class="pill ${a.platform}">${esc(a.platform_label)}</span>
-        ${esc(a.handle)} ${a.has_token ? "" : '<span class="sub2">(fara token)</span>'}</div>
+        ${esc(a.handle)}</div>
       <button class="ghost" data-sync="${a.id}">Sincronizeaza</button>
-    </div>`).join("") || `<p class="hint">Niciun cont Instagram/Facebook inca.</p>`;
+    </div>`).join("") || `<p class="hint">Niciun cont inca - adauga unul din link, mai sus.</p>`;
 
   $$("[data-sync]", $("#syncList")).forEach((btn) => btn.addEventListener("click", async () => {
     btn.disabled = true; btn.textContent = "...";
@@ -507,6 +558,51 @@ $("#csvFile")?.addEventListener("change", async (e) => {
 });
 
 // --------------------------------------------------------------------- import: export de platforma (mapare)
+
+async function refreshScraperStatus() {
+  try {
+    const status = await api("GET", "/api/scraper/status");
+    $("#scraperStatus").textContent = status.available
+      ? (status.logged_in
+          ? "Sincronizare automata: gata de folosit."
+          : "Ruleaza `python3 run.py --login` o data, ca sa te loghezi in conturi.")
+      : status.hint.replace(/\n/g, " ");
+  } catch {
+    $("#scraperStatus").textContent = "";
+  }
+}
+
+function wireAddFromLink() {
+  $("#addFromLinks").addEventListener("click", async () => {
+    const links = $("#linkUrls").value.split("\n").map((s) => s.trim()).filter(Boolean);
+    if (!links.length) { toast("Lipeste cel putin un link.", "err"); return; }
+    const clientId = $("#linkClient").value;
+    const clientName = $("#linkClientNew").value.trim();
+    if (!clientId && !clientName) { toast("Alege un client sau scrie un nume nou.", "err"); return; }
+
+    const btn = $("#addFromLinks");
+    btn.disabled = true; btn.textContent = "Se adauga...";
+    let added = 0, existed = 0;
+    const problems = [];
+    for (const url of links) {
+      try {
+        const res = await api("POST", "/api/accounts/from-link",
+          clientId ? { url, client_id: Number(clientId) } : { url, client_name: clientName });
+        res.created ? added++ : existed++;
+      } catch (err) {
+        problems.push(`${url.slice(0, 40)}: ${err.message}`);
+      }
+    }
+    btn.disabled = false; btn.textContent = "Adauga conturile";
+    $("#linkUrls").value = "";
+    $("#linkClientNew").value = "";
+    toast(`${added} conturi adaugate` + (existed ? `, ${existed} existau deja` : "") +
+      (problems.length ? `. Probleme: ${problems[0]}` : "."), problems.length ? "err" : "ok");
+    await reloadBoot();
+    renderSettings();
+    refreshAll();
+  });
+}
 
 function wireImport() {
   refreshImportPickers();

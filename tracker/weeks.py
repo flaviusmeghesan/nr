@@ -6,6 +6,7 @@ import re
 from datetime import date, datetime, timedelta
 
 WEEK_RE = re.compile(r"^(\d{4})-W(\d{2})$")
+MONTH_RE = re.compile(r"^(\d{4})-(\d{2})$")
 
 RO_DAYS = ["Luni", "Marti", "Miercuri", "Joi", "Vineri", "Sambata", "Duminica"]
 
@@ -105,3 +106,41 @@ def parse_datetime(value: str | None) -> datetime | None:
 def parse_date(value: str | None) -> date | None:
     dt = parse_datetime(value)
     return dt.date() if dt else None
+
+
+def month_of(value: date | datetime | str | None) -> str:
+    """Luna ('2026-09') pentru o data / datetime / string ISO."""
+    if value is None:
+        return current_month()
+    if isinstance(value, str):
+        value = parse_date(value)
+        if value is None:
+            return current_month()
+    if isinstance(value, datetime):
+        value = value.date()
+    return f"{value.year:04d}-{value.month:02d}"
+
+
+def current_month(today: date | None = None) -> str:
+    return month_of(today or date.today())
+
+
+def is_month(value: str) -> bool:
+    match = MONTH_RE.match(value or "")
+    return bool(match) and 1 <= int(match.group(2)) <= 12
+
+
+def month_label(month: str) -> str:
+    """'2026-09' -> 'septembrie 2026'."""
+    match = MONTH_RE.match(month or "")
+    if not match:
+        raise ValueError(f"luna invalida: {month!r}")
+    names = ["ianuarie", "februarie", "martie", "aprilie", "mai", "iunie", "iulie",
+             "august", "septembrie", "octombrie", "noiembrie", "decembrie"]
+    return f"{names[int(match.group(2)) - 1]} {match.group(1)}"
+
+
+def month_of_week(week: str) -> str:
+    """Luna in care cade majoritatea saptamanii (dupa ziua de joi, ca la ISO)."""
+    monday, _ = week_bounds(week)
+    return month_of(monday + timedelta(days=3))

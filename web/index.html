@@ -59,6 +59,23 @@
   <!-- ------------------------------------------------------------ SETARI -->
   <section id="view-settings" class="view" hidden>
     <div class="cards">
+      <article class="card wide">
+        <h2>Adauga conturi din link</h2>
+        <p class="hint">Lipeste linkurile paginilor (Instagram / Facebook / TikTok), cate
+          unul pe linie. Recunosc singur platforma si numele contului - nu completezi nimic.</p>
+        <div class="grid-form">
+          <select id="linkClient" aria-label="Client existent"></select>
+          <input id="linkClientNew" placeholder="...sau scrie un nume de client nou">
+        </div>
+        <textarea id="linkUrls" rows="3" style="width:100%;margin-top:8px"
+          placeholder="https://www.instagram.com/numepagina/&#10;https://www.tiktok.com/@numepagina&#10;https://www.facebook.com/numepagina"></textarea>
+        <div class="toolbar" style="margin-top:10px">
+          <button class="primary" id="addFromLinks">Adauga conturile</button>
+          <span class="spacer"></span>
+          <span class="hint" id="scraperStatus" style="margin:0"></span>
+        </div>
+      </article>
+
       <article class="card">
         <h2>Clienti</h2>
         <div id="clientList" class="list"></div>
@@ -114,10 +131,10 @@
       </article>
 
       <article class="card">
-        <h2>Sincronizare live (optional)</h2>
-        <p class="hint">Doar pentru conturile Instagram/Facebook care au ID + token Meta
-          Graph API setate mai jos, la cont - cere App Review de la Meta pentru conturi ale
-          clientilor. Pentru restul, foloseste importul din export.</p>
+        <h2>Sincronizare automata</h2>
+        <p class="hint">Trage postarile direct de pe pagini, prin browserul tau. Te loghezi
+          o singura data cu <code>python3 run.py --login</code>, apoi merge in fundal.
+          Din terminal poti sincroniza tot deodata cu <code>python3 run.py --sync</code>.</p>
         <div id="syncList" class="list"></div>
       </article>
 

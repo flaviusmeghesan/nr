@@ -70,7 +70,7 @@ class CsvFileImportTests(TrackerTestCase):
         self.week = weeks.current_week()
         self.monday, _ = weeks.week_bounds(self.week)
         store.set_target({"account_id": self.account["id"], "content_type": "video",
-                          "target_count": 5})
+                          "target_min": 5})
 
     def _csv(self):
         return (
