@@ -1,0 +1,210 @@
+<!DOCTYPE html>
+<html lang="ro">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Tracker continut social</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><text y='26' font-size='26'>📊</text></svg>">
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="topbar">
+  <div class="brand">
+    <span class="logo">◼</span>
+    <div>
+      <h1>Tracker continut</h1>
+      <p class="sub" id="weekLabel">&nbsp;</p>
+    </div>
+  </div>
+
+  <div class="weeknav">
+    <button class="icon" id="prevWeek" title="Saptamana trecuta">‹</button>
+    <button class="chip" id="thisWeek">Saptamana curenta</button>
+    <button class="icon" id="nextWeek" title="Saptamana viitoare">›</button>
+  </div>
+
+  <div class="filters">
+    <select id="clientFilter" aria-label="Filtru client"><option value="">Toti clientii</option></select>
+    <nav class="tabs">
+      <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="posts">Postari</button>
+      <button class="tab" data-tab="settings">Setari</button>
+    </nav>
+  </div>
+</header>
+
+<div id="toast" class="toast" hidden></div>
+
+<main>
+  <!-- ------------------------------------------------------------ DASHBOARD -->
+  <section id="view-dashboard" class="view">
+    <div class="summary" id="summary"></div>
+    <div id="dashboardBody"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ POSTARI -->
+  <section id="view-posts" class="view" hidden>
+    <div class="toolbar">
+      <button class="primary" id="newPost">+ Postare noua</button>
+      <select id="postStatusFilter" aria-label="Filtru status">
+        <option value="">Toate statusurile</option>
+      </select>
+      <label class="check"><input type="checkbox" id="allWeeks"> Toate saptamanile</label>
+      <span class="spacer"></span>
+      <a class="ghost" id="exportCsv" href="#">Export CSV</a>
+    </div>
+    <div id="postsBody"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ SETARI -->
+  <section id="view-settings" class="view" hidden>
+    <div class="cards">
+      <article class="card">
+        <h2>Clienti</h2>
+        <div id="clientList" class="list"></div>
+        <form id="clientForm" class="row-form">
+          <input name="name" placeholder="Nume client" required>
+          <button class="primary" type="submit">Adauga</button>
+        </form>
+      </article>
+
+      <article class="card">
+        <h2>Conturi</h2>
+        <p class="hint">Un cont = un client pe o platforma. ID-ul si tokenul sunt necesare
+          doar daca vrei sincronizare automata.</p>
+        <div id="accountList" class="list"></div>
+        <form id="accountForm" class="grid-form">
+          <select name="client_id" required></select>
+          <select name="platform" required></select>
+          <input name="handle" placeholder="@handle" required>
+          <button class="primary" type="submit">Adauga cont</button>
+        </form>
+      </article>
+
+      <article class="card">
+        <h2>Echipa</h2>
+        <p class="hint">Cine posteaza. Apare in dreptul fiecarei postari.</p>
+        <div id="memberList" class="chips"></div>
+        <form id="memberForm" class="row-form">
+          <input name="name" placeholder="Nume coleg" required>
+          <button class="primary" type="submit">Adauga</button>
+        </form>
+      </article>
+
+      <article class="card wide">
+        <h2>Plan saptamanal</h2>
+        <p class="hint">Cate postari de fiecare tip trebuie publicate. Planul standard
+          (<strong>orice saptamana</strong>) se aplica automat; poti pune o valoare diferita
+          doar pentru saptamana selectata.</p>
+        <div id="targetsBody"></div>
+      </article>
+
+      <article class="card wide">
+        <h2>Import din export (Meta Business Suite / TikTok Studio)</h2>
+        <p class="hint">Descarci exportul de postari al clientului (Business Suite &gt;
+          Content &gt; Export Data, sau TikTok Studio &gt; Download data) si il urci aici.
+          Aplicatia ghiceste ce inseamna fiecare coloana; confirmi o data, iar data viitoare
+          o retine automat pentru aceeasi platforma.</p>
+        <div class="grid-form" id="importPickers">
+          <select id="importClient" aria-label="Client"></select>
+          <select id="importAccount" aria-label="Cont"></select>
+        </div>
+        <input type="file" id="importFile" accept=".csv,text/csv" disabled>
+        <p class="hint" id="importFileHint">Alege mai intai clientul si contul.</p>
+      </article>
+
+      <article class="card">
+        <h2>Sincronizare live (optional)</h2>
+        <p class="hint">Doar pentru conturile Instagram/Facebook care au ID + token Meta
+          Graph API setate mai jos, la cont - cere App Review de la Meta pentru conturi ale
+          clientilor. Pentru restul, foloseste importul din export.</p>
+        <div id="syncList" class="list"></div>
+      </article>
+
+      <article class="card">
+        <h2>Import rapid (format propriu)</h2>
+        <p class="hint">Pentru un tabel facut de voi, cu coloanele: client, platforma, cont,
+          tip, status, planificat_pe, postat_la, titlu, link, autor, descriere.</p>
+        <input type="file" id="csvFile" accept=".csv,text/csv">
+      </article>
+    </div>
+  </section>
+</main>
+
+<!-- ------------------------------------------------------------ MODAL MAPARE IMPORT -->
+<dialog id="importDialog">
+  <div id="importMapStep">
+    <h2>Potriveste coloanele</h2>
+    <p class="hint" id="importSummary"></p>
+    <div class="map-table" id="mapTable"></div>
+    <table class="preview-table" id="importPreviewTable"></table>
+    <label class="check"><input type="checkbox" id="importSaveProfile" checked>
+      Retine aceasta mapare pentru platforma</label>
+    <footer class="dialog-actions">
+      <span class="spacer"></span>
+      <button type="button" class="ghost" id="cancelImport">Renunta</button>
+      <button type="button" class="primary" id="commitImport">Importa</button>
+    </footer>
+  </div>
+  <div id="importReportStep" hidden>
+    <h2>Import gata</h2>
+    <div id="importReportBody"></div>
+    <footer class="dialog-actions">
+      <span class="spacer"></span>
+      <button type="button" class="primary" id="closeImportReport">Inchide</button>
+    </footer>
+  </div>
+</dialog>
+
+<!-- ------------------------------------------------------------ MODAL POSTARE -->
+<dialog id="postDialog">
+  <form id="postForm" method="dialog">
+    <h2 id="postDialogTitle">Postare noua</h2>
+    <div class="grid2">
+      <label>Cont
+        <select name="account_id" required></select>
+      </label>
+      <label>Tip
+        <select name="content_type" required></select>
+      </label>
+      <label>Status
+        <select name="status" required></select>
+      </label>
+      <label>Postat de
+        <input name="author" list="memberOptions" placeholder="Nume">
+        <datalist id="memberOptions"></datalist>
+      </label>
+      <label>Planificat pe
+        <input type="date" name="planned_for">
+      </label>
+      <label>Postat la
+        <input type="date" name="posted_at">
+      </label>
+    </div>
+    <label>Titlu / descriere scurta
+      <input name="title" placeholder="ex. Reel cu produsul nou">
+    </label>
+    <label>Link catre postare
+      <input name="url" type="url" placeholder="https://instagram.com/p/...">
+    </label>
+    <label>Text postare
+      <textarea name="caption" rows="3"></textarea>
+    </label>
+    <label>Fisier (video / poza)
+      <input type="file" id="mediaFile" accept="video/*,image/*">
+    </label>
+    <p class="hint" id="mediaHint" hidden></p>
+    <input type="hidden" name="media_path">
+    <input type="hidden" name="id">
+    <footer class="dialog-actions">
+      <button type="button" class="ghost" id="deletePost" hidden>Sterge</button>
+      <span class="spacer"></span>
+      <button type="button" class="ghost" id="cancelPost">Renunta</button>
+      <button type="submit" class="primary">Salveaza</button>
+    </footer>
+  </form>
+</dialog>
+
+<script src="app.js"></script>
+</body>
+</html>

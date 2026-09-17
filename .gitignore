@@ -1,0 +1,11 @@
+# Baza de date locala si fisierele media nu se urca in git
+data/
+media/
+!media/.gitkeep
+secrets.json
+
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.DS_Store
