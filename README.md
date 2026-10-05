@@ -10,7 +10,8 @@ automata (Playwright), si e optionala.
 
 ## Pornire
 
-Ai nevoie doar de Python 3.10+ (verifica cu `python3 --version`).
+Ai nevoie doar de Python 3.9 sau mai nou (verifica cu `python3 --version`). Pe un Mac
+nou, `python3` vine de obicei cu 3.9 - e suficient. Testat pe 3.9 si 3.11.
 
 ```bash
 python3 run.py

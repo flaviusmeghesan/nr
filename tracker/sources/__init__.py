@@ -9,6 +9,8 @@ Toate produc acelasi dict normalizat si trec prin `store.import_post()`, care
 face reconcilierea cu ce era deja planificat.
 """
 
+from __future__ import annotations
+
 from . import csvfile, graph, internal_csv, scraper  # noqa: F401
 
 
