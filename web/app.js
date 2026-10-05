@@ -178,6 +178,7 @@ async function renderDashboard() {
         <h2>${esc(client.name)}</h2>
         <span class="count">${client.totals.done}/${client.totals.goals} obiective indeplinite</span>
       </div>
+      ${monthLine(client.month_summary)}
       ${client.rows.length ? `
         <div class="account" style="margin-bottom:12px">
           <div class="account-head">
@@ -189,6 +190,21 @@ async function renderDashboard() {
       ${accountCards ? `<div class="accounts">${accountCards}</div>` : ""}
     </div>`;
   }).join("");
+}
+
+
+// Ce s-a publicat in luna, pe tipuri - independent de tinte ("1 poza, 0 video").
+function monthLine(ms) {
+  if (!ms) return "";
+  const bits = [
+    `<span>🎬 <b>${ms.video}</b> video</span>`,
+    `<span>🖼️ <b>${ms.photo}</b> ${ms.photo === 1 ? "poza" : "poze"}</span>`,
+  ];
+  if (ms.carousel) bits.push(`<span><b>${ms.carousel}</b> ${ms.carousel === 1 ? "carusel" : "caruseluri"}</span>`);
+  if (ms.story) bits.push(`<span><b>${ms.story}</b> ${ms.story === 1 ? "story" : "story-uri"}</span>`);
+  return `<div class="month-line"><strong>${esc(ms.month_label)}</strong> · ${ms.materials} ${
+    ms.materials === 1 ? "material publicat" : "materiale publicate"}${ms.materials ? ": " : ""}${
+    ms.materials ? bits.join(" · ") : ` (${bits.join(" · ")})`}</div>`;
 }
 
 function renderGoalRow(row) {
@@ -294,6 +310,7 @@ function renderReportClient(client, inProgress, rangeLabel, monthLabel) {
           inProgress && s.weeks_total > s.weeks_finished ? ` (din ${s.weeks_total} in luna)` : ""}</span></div>
         <div><b>${s.materials}</b><span class="l">materiale livrate</span></div>
       </div>
+      ${monthLine(client.month_summary)}
 
       <h3>Obiective lunare</h3>
       ${goalsHtml}

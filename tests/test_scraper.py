@@ -174,3 +174,53 @@ class ShortReasonTests(unittest.TestCase):
     def test_empty_error_has_fallback(self):
         from tracker.sources.scraper.browser import short_reason
         self.assertEqual(short_reason(RuntimeError("")), "motiv necunoscut")
+
+
+class OwnershipFilterTests(unittest.TestCase):
+    """O pagina de profil incarca si postari straine (sugestii, taguri). Fara filtru pe
+    autor, ele s-ar numara la client si cifrele ar iesi umflate."""
+
+    def node(self, pk, owner=None, **extra):
+        data = {"pk": pk, "code": f"C{pk}", "taken_at": 1789056000, "media_type": 1}
+        if owner:
+            data["user"] = {"username": owner}
+        data.update(extra)
+        return data
+
+    def ids(self, nodes, handle="@restaurantcentralbistrita"):
+        posts = extract_posts("instagram", [{"edges": nodes}], handle)
+        return sorted(p["external_id"] for p in posts)
+
+    def test_drops_posts_by_other_accounts(self):
+        nodes = [self.node("1", "restaurantcentralbistrita"), self.node("2", "alt.cont")]
+        self.assertEqual(self.ids(nodes), ["1"])
+
+    def test_username_match_ignores_case(self):
+        self.assertEqual(self.ids([self.node("1", "RestaurantCentralBistrita")]), ["1"])
+
+    def test_keeps_collab_posts_where_we_are_coauthor(self):
+        collab = self.node("3", "alt.cont",
+                           coauthor_producers=[{"username": "restaurantcentralbistrita"}])
+        self.assertEqual(self.ids([collab]), ["3"])
+
+    def test_keeps_posts_with_no_owner_info(self):
+        """Fara autor in raspuns nu putem sti, si mai bine o postare in plus decat una pierduta."""
+        self.assertEqual(self.ids([self.node("4")]), ["4"])
+
+    def test_tiktok_drops_reposts_of_other_creators(self):
+        payload = {"itemList": [
+            {"id": "1", "desc": "al nostru", "createTime": 1789056000,
+             "author": {"uniqueId": "central.bistrita"}, "stats": {"playCount": 1}},
+            {"id": "2", "desc": "repostat", "createTime": 1789056000,
+             "author": {"uniqueId": "alt.creator"}, "stats": {"playCount": 1}}]}
+        posts = extract_posts("tiktok", [payload], "@central.bistrita")
+        self.assertEqual([p["external_id"] for p in posts], ["1"])
+
+    def test_tiktok_author_given_as_plain_string(self):
+        payload = {"itemList": [{"id": "1", "desc": "x", "createTime": 1789056000,
+                                 "author": "central.bistrita", "stats": {}}]}
+        self.assertEqual(len(extract_posts("tiktok", [payload], "@central.bistrita")), 1)
+
+    def test_facebook_is_not_filtered(self):
+        posts = extract_posts("facebook", [samples.FACEBOOK_FEED], "@oricecevaaltceva")
+        self.assertEqual(len(posts), 1)

@@ -158,6 +158,42 @@ def fb_extract_one(node: dict) -> dict:
     )
 
 
+# --------------------------------------------------------------------------- autorul postarii
+
+def ig_owners(node: dict) -> set[str]:
+    """Contul care a publicat postarea + coautorii (postari in colaborare apar pe
+    profilul ambelor conturi)."""
+    owners = {deep(node, "user.username"), deep(node, "owner.username")}
+    for producer in node.get("coauthor_producers") or []:
+        if isinstance(producer, dict):
+            owners.add(producer.get("username"))
+    return {str(o).lower() for o in owners if o}
+
+
+def tt_owners(node: dict) -> set[str]:
+    author = node.get("author")
+    if isinstance(author, str):
+        return {author.lower()} if author else set()
+    if isinstance(author, dict):
+        name = pick(author, "uniqueId", "unique_id")
+        return {str(name).lower()} if name else set()
+    return set()
+
+
+# Facebook nu are un camp de autor la fel de sigur (se identifica dupa ID numeric sau
+# nume afisat), asa ca nu filtram acolo - mai bine o postare in plus decat una pierduta.
+OWNERS = {"instagram": ig_owners, "tiktok": tt_owners}
+
+
+def belongs_to(platform: str, node: dict, handle: str) -> bool:
+    """False doar cand stim sigur ca postarea e a altui cont. Pagina unui profil mai
+    incarca si postari straine (sugestii, taguri, "mai multe de la..."), iar fara
+    filtrul asta ele s-ar numara la clientul nostru."""
+    wanted = (handle or "").strip().lstrip("@").lower()
+    owners = OWNERS.get(platform, lambda _node: set())(node)
+    return not (owners and wanted and wanted not in owners)
+
+
 # --------------------------------------------------------------------------- dispecer
 
 EXTRACTORS = {
@@ -168,14 +204,14 @@ EXTRACTORS = {
 
 
 def extract_posts(platform: str, payloads: list, handle: str = "") -> list[dict]:
-    """Scoate toate postarile dintr-o lista de raspunsuri JSON captate."""
+    """Scoate toate postarile contului din raspunsurile JSON captate."""
     if platform not in EXTRACTORS:
         return []
     looks_like, extract_one = EXTRACTORS[platform]
     found = []
     for payload in payloads:
         for node in walk(payload):
-            if not looks_like(node):
+            if not looks_like(node) or not belongs_to(platform, node, handle):
                 continue
             try:
                 post = extract_one(node, handle)

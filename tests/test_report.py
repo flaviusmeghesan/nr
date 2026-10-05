@@ -166,3 +166,53 @@ class ReportScopeTests(ReportTestCase):
 if __name__ == "__main__":
     import unittest
     unittest.main()
+
+
+class MonthSummaryTests(ReportTestCase):
+    """"Luna asta: 1 poza, 0 video" - totalul pe tipuri, independent de tinte."""
+
+    def test_one_photo_and_no_video(self):
+        self.publish("2026-10-01", title="poza", content_type="photo")
+        ms = store.month_summary(self.client["id"], "2026-10")
+        self.assertEqual((ms["materials"], ms["photo"], ms["video"]), (1, 1, 0))
+
+    def test_same_material_on_three_networks_counts_once(self):
+        self.publish("2026-10-01", title="poza", content_type="photo",
+                     platforms=("instagram", "facebook", "tiktok"))
+        ms = store.month_summary(self.client["id"], "2026-10")
+        self.assertEqual(ms["materials"], 1)
+        self.assertEqual(ms["posts"], 3)
+
+    def test_counts_only_the_requested_month(self):
+        self.publish("2026-09-30", title="septembrie", content_type="video")
+        self.publish("2026-10-01", title="octombrie", content_type="photo")
+        self.assertEqual(store.month_summary(self.client["id"], "2026-10")["video"], 0)
+        self.assertEqual(store.month_summary(self.client["id"], "2026-09")["video"], 1)
+
+    def test_month_with_nothing_is_all_zero(self):
+        ms = store.month_summary(self.client["id"], "2026-10")
+        self.assertEqual((ms["materials"], ms["video"], ms["photo"]), (0, 0, 0))
+
+    def test_present_in_report_and_dashboard(self):
+        self.publish("2026-10-01", title="poza", content_type="photo")
+        report = store.monthly_report("2026-10", today=TODAY)["clients"][0]
+        self.assertEqual(report["month_summary"]["photo"], 1)
+        dash = store.dashboard(weeks.week_of(TODAY))["clients"][0]
+        self.assertEqual(dash["month_summary"]["photo"], 1)
+        self.assertEqual(dash["month_summary"]["month"], "2026-10")
+
+
+class PostsDiagnosticTests(ReportTestCase):
+    def test_table_shows_week_month_and_monthly_totals(self):
+        import run
+        self.publish("2026-10-01", title="Poza noua", content_type="photo")
+        self.publish("2026-09-29", title="Video septembrie", content_type="video")
+        text = run.format_posts_table(store.list_posts())
+        self.assertIn("Poza noua", text)
+        self.assertIn("2026-10", text)
+        self.assertIn("2026-10: 1  (1 poza)", text)
+        self.assertIn("2026-09: 1  (1 video)", text)
+
+    def test_empty_database_explains_what_to_do(self):
+        import run
+        self.assertIn("--sync", run.format_posts_table([]))

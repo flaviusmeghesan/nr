@@ -679,6 +679,7 @@ def dashboard(week: str | None = None, client_id: int | None = None,
 
     # Tintele pe client (cele care se numara o data pe toate platformele).
     for client_row in clients_out.values():
+        client_row["month_summary"] = month_summary(client_row["id"], month)
         client_row["rows"] = _build_rows(period_keys, client_id=client_row["id"])
         rows = client_row["rows"] + client_row.pop("_account_rows")
         client_row["totals"] = _goal_totals(rows)
@@ -853,6 +854,24 @@ def stats(week: str | None = None, range_: str = "month",
             "trend": trend}
 
 
+def month_summary(client_id: int, month: str) -> dict:
+    """Ce s-a publicat intr-o luna, pe tipuri, indiferent de tinte.
+
+    Ecranele de plan arata doar ce are o tinta (ex. "video pe luna 0/10"); asta
+    raspunde la "cate postari am facut luna asta, si de ce fel?". Acelasi material
+    publicat pe mai multe retele se numara o singura data.
+    """
+    rows = _stat_rows(client_id, "p.month = ?", (month,))
+    kinds: dict[str, str] = {}
+    for row in rows:
+        kinds.setdefault(row["content_group"] or f"p{row['id']}", row["content_type"])
+    counts = {ctype: 0 for ctype in POST_CONTENT_TYPES}
+    for ctype in kinds.values():
+        counts[ctype] = counts.get(ctype, 0) + 1
+    return {"month": month, "month_label": weeks.month_label(month),
+            "materials": len(kinds), "posts": len(rows), **counts}
+
+
 # --------------------------------------------------------------------------- raport lunar
 
 def _week_state(rows: list[dict], monday: date, sunday: date, today: date) -> str:
@@ -918,6 +937,7 @@ def monthly_report(month: str | None = None, client_id: int | None = None,
         finished = [w for w in week_entries if w["state"] in ("done", "missed")]
         report_clients.append({
             "id": client["id"], "name": client["name"], "goals": goals,
+            "month_summary": month_summary(client["id"], month),
             "weeks": week_entries, "materials": materials,
             "summary": {
                 "weeks_finished": len(finished),

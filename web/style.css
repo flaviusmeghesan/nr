@@ -329,3 +329,6 @@ table.plain td:not(:first-child), table.plain th:not(:first-child) { text-align:
   .view[hidden] { display: none !important; }
   .delivered .links a { color: #000; }
 }
+
+.month-line { margin: 0 0 10px; font-size: 13.5px; color: var(--muted); }
+.month-line b, .month-line strong { color: var(--text); }

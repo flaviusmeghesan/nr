@@ -125,6 +125,44 @@ def do_setup(values: list[str], with_plan: bool) -> int:
     return 1 if failed == len(links) else 0
 
 
+def format_posts_table(posts: list[dict]) -> str:
+    """Tabel text cu ce e salvat in baza de date - ca sa vezi exact ce a adus
+    sincronizarea si cum a fost incadrat (tip, saptamana, luna)."""
+    if not posts:
+        return "  Nicio postare salvata. Ruleaza `python3 run.py --sync` mai intai."
+    labels = {"video": "video", "photo": "poza", "carousel": "carusel", "story": "story"}
+    lines = [f"  {'Data':16} {'Retea':10} {'Tip':8} {'Status':10} {'Sapt.':9} {'Luna':8} Titlu",
+             "  " + "-" * 86]
+    for post in posts:
+        when = (post["posted_at"] or post["planned_for"] or "")[:16]
+        lines.append(
+            f"  {when:16} {post['platform_label']:10} "
+            f"{labels.get(post['content_type'], post['content_type']):8} "
+            f"{post['status']:10} {post['week']:9} {post['month']:8} "
+            f"{(post['title'] or post['caption'] or '')[:40]}")
+
+    months: dict[str, dict[str, set]] = {}
+    for post in posts:
+        if post["status"] != "posted":
+            continue
+        group = post["content_group"] or f"p{post['id']}"
+        months.setdefault(post["month"], {}).setdefault(post["content_type"], set()).add(group)
+    lines += ["", "  Materiale publicate pe luna (acelasi material pe mai multe retele = 1):"]
+    for month in sorted(months, reverse=True):
+        kinds = months[month]
+        total = sum(len(groups) for groups in kinds.values())
+        detail = ", ".join(f"{len(kinds[k])} {labels.get(k, k)}" for k in
+                           ("video", "photo", "carousel", "story") if k in kinds)
+        lines.append(f"    {month}: {total}  ({detail})")
+    return "\n".join(lines)
+
+
+def do_posts() -> int:
+    posts = store.list_posts(limit=2000)
+    print("\n" + format_posts_table(posts) + "\n")
+    return 0
+
+
 def do_login() -> int:
     """Pasul unic de logare: deschide un browser vizibil, tu te loghezi, gata."""
     try:
@@ -176,6 +214,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--scrolls", type=int, metavar="N",
                         help="cu --sync: de cate ori derulam pagina (implicit 4). Mai mult = "
                              "postari mai vechi; pentru istoric foloseste ex. --scrolls 25")
+    parser.add_argument("--posts", action="store_true",
+                        help="afiseaza ce postari sunt salvate si cum au fost incadrate (diagnostic)")
     parser.add_argument("--sync", action="store_true",
                         help="sincronizeaza toate conturile acum, fara sa porneasca serverul")
     args = parser.parse_args(argv)
@@ -183,6 +223,8 @@ def main(argv: list[str] | None = None) -> int:
     db.init_db()
     if args.demo:
         seed_demo()
+    if args.posts:
+        return do_posts()
     if args.setup:
         return do_setup(args.setup, args.contract_plan)
     if args.login:
