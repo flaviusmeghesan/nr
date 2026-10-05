@@ -206,3 +206,6 @@ td.target-cell input { width: 52px; }
 td.target-cell .dash { color: var(--muted); margin: 0 3px; }
 table.targets thead th:not(:first-child) { text-align: center; }
 details summary::-webkit-details-marker { color: var(--muted); }
+
+code { white-space: nowrap; font-size: 12px; background: var(--panel-2);
+  padding: 1px 5px; border-radius: 5px; }

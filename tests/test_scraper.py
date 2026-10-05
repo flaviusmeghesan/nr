@@ -147,3 +147,30 @@ class ProfileUrlTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ShortReasonTests(unittest.TestCase):
+    def test_strips_playwright_call_log(self):
+        from tracker.sources.scraper.browser import short_reason
+        noisy = RuntimeError(
+            'Page.goto: net::ERR_NAME_NOT_RESOLVED at https://www.instagram.com/x/\n'
+            'Call log:\n  - navigating to "https://www.instagram.com/x/"\n')
+        reason = short_reason(noisy)
+        self.assertNotIn("Call log", reason)
+        self.assertNotIn("navigating", reason)
+        self.assertIn("ERR_NAME_NOT_RESOLVED", reason)
+        self.assertIn("conexiune", reason)
+
+    def test_explains_proxy_blocks(self):
+        from tracker.sources.scraper.browser import short_reason
+        reason = short_reason(RuntimeError("Page.goto: net::ERR_TUNNEL_CONNECTION_FAILED"))
+        self.assertIn("proxy", reason)
+
+    def test_passes_through_timeouts(self):
+        from tracker.sources.scraper.browser import short_reason
+        self.assertIn("Timeout 45000ms", short_reason(
+            RuntimeError("Page.goto: Timeout 45000ms exceeded.\nCall log:\n  - x")))
+
+    def test_empty_error_has_fallback(self):
+        from tracker.sources.scraper.browser import short_reason
+        self.assertEqual(short_reason(RuntimeError("")), "motiv necunoscut")

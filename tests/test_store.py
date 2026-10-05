@@ -325,3 +325,62 @@ class ContentGroupingTests(TrackerTestCase):
         self.assertEqual(row["period"], "month")
         self.assertEqual(row["posted"], 2)
         self.assertEqual(row["remaining"], 8)
+
+
+class DashboardTotalsTests(TrackerTestCase):
+    """Regresie: totalurile adunau randuri care se suprapun si iesea "6/16 realizate"
+    cand de fapt erau 2 materiale publicate. Acum numaram obiectivele indeplinite."""
+
+    def setUp(self):
+        super().setUp()
+        self.client = store.create_client({"name": "Client A"})
+        self.accounts = [
+            store.create_account({"client_id": self.client["id"], "platform": p,
+                                  "handle": "@a"}) for p in ("instagram", "tiktok")]
+        store.set_target({"client_id": self.client["id"], "period": "week",
+                          "content_type": "any", "target_min": 4})
+        store.set_target({"client_id": self.client["id"], "period": "week",
+                          "content_type": "video", "target_min": 2, "target_max": 3})
+        store.set_target({"client_id": self.client["id"], "period": "month",
+                          "content_type": "video", "target_min": 10})
+        self.week = weeks.current_week()
+        self.monday, _ = weeks.week_bounds(self.week)
+
+    def _publish_two_materials_everywhere(self):
+        for hour, name in ((10, "unu"), (16, "doi")):
+            for account in self.accounts:
+                store.create_post({
+                    "account_id": account["id"], "content_type": "video",
+                    "status": "posted", "posted_at": f"{self.monday.isoformat()} {hour}:00",
+                    "title": name, "caption": f"text {name}"})
+
+    def test_totals_count_goals_not_overlapping_posts(self):
+        self._publish_two_materials_everywhere()
+        totals = store.dashboard(self.week)["totals"]
+        # 3 obiective in plan; doar "video pe saptamana" (2-3) e indeplinit
+        self.assertEqual(totals["goals"], 3)
+        self.assertEqual(totals["done"], 1)
+        self.assertEqual(totals["open"], 2)
+
+    def test_client_totals_match_global_for_single_client(self):
+        self._publish_two_materials_everywhere()
+        dash = store.dashboard(self.week)
+        self.assertEqual(dash["clients"][0]["totals"]["goals"], dash["totals"]["goals"])
+        self.assertEqual(dash["clients"][0]["totals"]["done"], dash["totals"]["done"])
+
+    def test_in_progress_counts_materials_not_posts(self):
+        for account in self.accounts:
+            store.create_post({
+                "account_id": account["id"], "content_type": "video", "status": "planned",
+                "planned_for": self.monday.isoformat() + " 12:00",
+                "title": "in lucru", "caption": "acelasi text"})
+        totals = store.dashboard(self.week)["totals"]
+        self.assertEqual(totals["in_progress"], 1)  # un material, pe 2 retele
+
+    def test_no_goals_means_zero_totals(self):
+        empty = store.create_client({"name": "Fara plan"})
+        store.create_account({"client_id": empty["id"], "platform": "instagram",
+                              "handle": "@x"})
+        dash = store.dashboard(self.week, client_id=empty["id"])
+        self.assertEqual(dash["totals"]["goals"], 0)
+        self.assertEqual(dash["totals"]["done"], 0)

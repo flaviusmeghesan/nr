@@ -90,8 +90,23 @@ async function refreshAll() {
   if (state.tab === "settings") await renderSettings();
 }
 
+const MONTHS_RO = ["ian", "feb", "mar", "apr", "mai", "iun", "iul", "aug", "sep", "oct", "nov", "dec"];
+
+function weekLabel(week) {
+  // '2026-W41' -> '5 - 11 oct 2026' (luni - duminica, saptamana ISO)
+  const [y, w] = week.split("-W").map(Number);
+  const jan4 = new Date(Date.UTC(y, 0, 4));
+  const monday = new Date(jan4);
+  monday.setUTCDate(jan4.getUTCDate() - ((jan4.getUTCDay() + 6) % 7) + (w - 1) * 7);
+  const sunday = new Date(monday);
+  sunday.setUTCDate(monday.getUTCDate() + 6);
+  const sameMonth = monday.getUTCMonth() === sunday.getUTCMonth();
+  const left = `${monday.getUTCDate()}${sameMonth ? "" : " " + MONTHS_RO[monday.getUTCMonth()]}`;
+  return `${left} - ${sunday.getUTCDate()} ${MONTHS_RO[sunday.getUTCMonth()]} ${sunday.getUTCFullYear()}`;
+}
+
 function renderWeekLabel() {
-  $("#weekLabel").textContent = state.week;
+  $("#weekLabel").textContent = weekLabel(state.week);
   $("#thisWeek").classList.toggle("active", state.week === state.boot.week);
 }
 
@@ -134,14 +149,14 @@ async function renderDashboard() {
     "GET", `/api/dashboard?week=${state.week}${state.clientId ? `&client_id=${state.clientId}` : ""}`));
   state.week = data.week;
   renderWeekLabel();
-  $("#weekLabel").textContent = `${data.label} · ${data.is_current ? `${data.days_left} zile ramase` : "saptamana trecuta/viitoare"}`;
+  $("#weekLabel").textContent = `${data.label}${data.is_current ? ` · ${data.days_left} zile ramase` : ""}`;
 
   const t = data.totals;
   $("#summary").innerHTML = `
-    <div class="stat"><div class="k">Tinta saptamana</div><div class="v">${t.target}</div></div>
-    <div class="stat good"><div class="k">Postate</div><div class="v">${t.posted}</div></div>
-    <div class="stat warn"><div class="k">In lucru</div><div class="v">${t.planned}</div></div>
-    <div class="stat ${t.remaining ? "bad" : "good"}"><div class="k">Mai raman</div><div class="v">${t.remaining}</div></div>
+    <div class="stat"><div class="k">Obiective din plan</div><div class="v">${t.goals}</div></div>
+    <div class="stat good"><div class="k">Indeplinite</div><div class="v">${t.done}</div></div>
+    <div class="stat ${t.open ? "bad" : "good"}"><div class="k">Mai raman</div><div class="v">${t.open}</div></div>
+    <div class="stat warn"><div class="k">In lucru saptamana asta</div><div class="v">${t.in_progress}</div></div>
     ${data.overdue ? `<div class="stat bad"><div class="k">Restante (saptamani trecute)</div><div class="v">${data.overdue}</div></div>` : ""}
   `;
 
@@ -157,7 +172,7 @@ async function renderDashboard() {
     <div class="client-block">
       <div class="client-head">
         <h2>${esc(client.name)}</h2>
-        <span class="count">${client.totals.posted}/${client.totals.target} realizate</span>
+        <span class="count">${client.totals.done}/${client.totals.goals} obiective indeplinite</span>
       </div>
       ${client.rows.length ? `
         <div class="account" style="margin-bottom:12px">
@@ -241,7 +256,7 @@ function renderPostRow(post) {
         <div class="title">${esc(post.title || post.caption.slice(0, 60) || "(fara titlu)")}</div>
         <div class="meta">
           <span>${esc(post.client_name)}</span>
-          <span>${esc(post.platform)} · ${esc(post.handle)}</span>
+          <span>${esc(post.platform_label)} · ${esc(post.handle)}</span>
           <span>${esc(post.content_label)}</span>
           ${post.author ? `<span>${esc(post.author)}</span>` : ""}
           ${when ? `<span class="${late ? "late" : ""}">${late ? "restant · " : ""}${esc(when.slice(0, 10))}</span>` : ""}

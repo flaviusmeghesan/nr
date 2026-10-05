@@ -572,13 +572,17 @@ def delete_import_profile(profile_id: int) -> None:
 
 # --------------------------------------------------------------------------- dashboard
 
-def _empty_totals() -> dict:
-    return {"target": 0, "posted": 0, "planned": 0, "remaining": 0}
+def _goal_totals(rows: list[dict]) -> dict:
+    """Totaluri pe OBIECTIVE (randuri de plan), nu pe postari.
 
-
-def _add_totals(dest: dict, src: dict) -> None:
-    for key in dest:
-        dest[key] += src.get(key, 0)
+    Randurile se suprapun - acelasi material intra in "orice postare pe
+    saptamana", in "video pe saptamana" si in "video pe luna" - deci o suma de
+    postari sau de tinte ar socoti de mai multe ori aceleasi lucruri si ar iesi
+    un numar fara sens. "Cate obiective din plan sunt indeplinite" nu are
+    problema asta.
+    """
+    done = sum(1 for row in rows if row["done"])
+    return {"goals": len(rows), "done": done, "open": len(rows) - done}
 
 
 def _count(period: str, period_key: str, *, client_id: int | None = None,
@@ -659,30 +663,37 @@ def dashboard(week: str | None = None, client_id: int | None = None,
                         tuple(params))
 
     clients_out: dict[int, dict] = {}
-    grand = _empty_totals()
+    all_rows: list[dict] = []
 
     for account in accounts:
         bucket = clients_out.setdefault(account["client_id"], {
             "id": account["client_id"], "name": account["client_name"],
-            "rows": [], "totals": _empty_totals(), "accounts": []})
+            "rows": [], "accounts": [], "_account_rows": []})
         account_rows = _build_rows(period_keys, account_id=account["id"])
-        account_totals = _empty_totals()
-        for row in account_rows:
-            _add_totals(account_totals, row)
+        bucket["_account_rows"].extend(account_rows)
         bucket["accounts"].append({
             "id": account["id"], "platform": account["platform"],
             "platform_label": PLATFORM_LABELS[account["platform"]],
             "handle": account["handle"], "rows": account_rows,
-            "totals": account_totals})
-        _add_totals(bucket["totals"], account_totals)
+            "totals": _goal_totals(account_rows)})
 
     # Tintele pe client (cele care se numara o data pe toate platformele).
     for client_row in clients_out.values():
-        client_rows = _build_rows(period_keys, client_id=client_row["id"])
-        client_row["rows"] = client_rows
-        for row in client_rows:
-            _add_totals(client_row["totals"], row)
-        _add_totals(grand, client_row["totals"])
+        client_row["rows"] = _build_rows(period_keys, client_id=client_row["id"])
+        rows = client_row["rows"] + client_row.pop("_account_rows")
+        client_row["totals"] = _goal_totals(rows)
+        all_rows.extend(rows)
+
+    # Cate materiale sunt "in lucru" saptamana asta (grupate, deci acelasi
+    # material pe 3 retele e unul singur).
+    planned_sql = ("SELECT COUNT(DISTINCT COALESCE(NULLIF(p.content_group, ''), 'p' || p.id)) "
+                   "AS n FROM posts p JOIN accounts a ON a.id = p.account_id "
+                   "WHERE p.week = ? AND p.status IN ('idea', 'planned', 'scheduled')")
+    planned_params: list = [week]
+    if client_id:
+        planned_sql += " AND a.client_id = ?"
+        planned_params.append(int(client_id))
+    in_progress = db.query(planned_sql, tuple(planned_params))[0]["n"]
 
     overdue = db.query(
         "SELECT COUNT(*) AS n FROM posts p JOIN accounts a ON a.id = p.account_id "
@@ -697,7 +708,7 @@ def dashboard(week: str | None = None, client_id: int | None = None,
         "month_label": weeks.month_label(month),
         "days_left": weeks.days_left(week),
         "is_current": week == weeks.current_week(),
-        "totals": grand,
+        "totals": {**_goal_totals(all_rows), "in_progress": in_progress},
         "overdue": overdue,
         "clients": sorted(clients_out.values(), key=lambda c: c["name"].lower()),
     }

@@ -83,6 +83,22 @@ def _launch_options(headless: bool) -> dict:
     return options
 
 
+def short_reason(exc: Exception) -> str:
+    """Prima linie utila dintr-o eroare Playwright, fara 'Call log' si fara codul intern.
+
+    Playwright pune in mesaj tot jurnalul de navigare; utilizatorul are nevoie doar
+    de motiv (ex. 'net::ERR_TUNNEL_CONNECTION_FAILED' sau 'Timeout 45000ms exceeded').
+    """
+    first = (str(exc).strip().splitlines() or [""])[0]
+    first = first.replace("Page.goto: ", "").strip()
+    first = re.sub(r"\s+at https?://\S+$", "", first)  # "... at https://site/profil"
+    if "ERR_TUNNEL_CONNECTION_FAILED" in first or "ERR_PROXY" in first:
+        return f"{first} (conexiunea la internet e blocata de un proxy sau firewall)"
+    if "ERR_NAME_NOT_RESOLVED" in first or "ERR_INTERNET_DISCONNECTED" in first:
+        return f"{first} (nu ai conexiune la internet)"
+    return first or "motiv necunoscut"
+
+
 def _collect_inline_json(html: str) -> list:
     out = []
     for pattern in INLINE_JSON_PATTERNS:
@@ -159,7 +175,8 @@ def fetch_payloads(platform: str, handle: str, headless: bool = True,
             folder = _dump_debug(platform, handle, html, payloads, page)
             context.close()
             raise ScrapeFailed(
-                f"Nu am putut incarca {url} ({exc}). Detalii salvate in {folder}.") from None
+                f"Nu am putut deschide {url}: {short_reason(exc)}. "
+                f"Detalii salvate in {folder}.") from None
 
         payloads.extend(_collect_inline_json(html))
         debug_folder = None
