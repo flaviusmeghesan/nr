@@ -190,6 +190,11 @@ def unique_path(path: Path) -> Path:
 ROUTES = [
     ("GET",    r"^/api/bootstrap$",        lambda m, p, b: api_bootstrap(p, b)),
     ("GET",    r"^/api/dashboard$",        lambda m, p, b: api_dashboard(p, b)),
+    ("GET",    r"^/api/report$",           lambda m, p, b: store.monthly_report(
+        month=_str(p, "month") or None, client_id=_int(p, "client_id"))),
+    ("GET",    r"^/api/stats$",            lambda m, p, b: store.stats(
+        week=_str(p, "week") or None, range_=_str(p, "range") or "month",
+        client_id=_int(p, "client_id"))),
 
     ("GET",    r"^/api/clients$",          lambda m, p, b: {"clients": store.list_clients()}),
     ("POST",   r"^/api/clients$",          lambda m, p, b: store.create_client(b)),

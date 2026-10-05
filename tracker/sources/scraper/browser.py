@@ -50,6 +50,23 @@ PROFILE_URLS = {
     "tiktok": "https://www.tiktok.com/@{handle}",
     "facebook": "https://www.facebook.com/{handle}/",
 }
+# Paginile de Facebook fara nume de utilizator se deschid dupa ID numeric.
+FACEBOOK_ID_URL = "https://www.facebook.com/profile.php?id={handle}"
+
+LOGIN_URLS = (
+    "https://www.instagram.com/accounts/login/",
+    "https://www.facebook.com/login/",
+    "https://www.tiktok.com/login",
+)
+
+
+def profile_url(platform: str, handle: str) -> str:
+    """Linkul de profil pentru un cont. '@central.bistrita' -> pagina TikTok/Instagram,
+    '61588484789306' (doar cifre) pe Facebook -> profile.php?id=..."""
+    clean = (handle or "").strip().lstrip("@")
+    if platform == "facebook" and clean.isdigit():
+        return FACEBOOK_ID_URL.format(handle=clean)
+    return PROFILE_URLS[platform].format(handle=clean)
 
 
 class ScraperUnavailable(RuntimeError):
@@ -148,7 +165,7 @@ def fetch_payloads(platform: str, handle: str, headless: bool = True,
 
     from playwright.sync_api import sync_playwright
 
-    url = PROFILE_URLS[platform].format(handle=handle.strip().lstrip("@"))
+    url = profile_url(platform, handle)
     payloads: list = []
     html = ""
 
@@ -204,20 +221,22 @@ def open_login_window() -> None:
     from playwright.sync_api import sync_playwright
 
     PROFILE_DIR.mkdir(parents=True, exist_ok=True)
-    print("\n  Se deschide un browser. Logheaza-te in conturile de care ai nevoie")
-    print("  (Instagram / Facebook / TikTok), apoi INCHIDE fereastra.")
+    print("\n  Se deschide un browser cu Instagram, Facebook si TikTok in cate un tab.")
+    print("  Logheaza-te in fiecare (poti folosi contul tau personal - aplicatia citeste")
+    print("  doar paginile publice), apoi INCHIDE fereastra browserului.")
     print(f"  Sesiunea se salveaza in {PROFILE_DIR}\n")
 
     with sync_playwright() as pw:
         context = pw.chromium.launch_persistent_context(**_launch_options(headless=False))
-        page = context.pages[0] if context.pages else context.new_page()
+        for index, url in enumerate(LOGIN_URLS):
+            page = context.pages[0] if index == 0 and context.pages else context.new_page()
+            try:
+                page.goto(url, timeout=PAGE_TIMEOUT)
+            except Exception:
+                pass  # un tab care nu se incarca nu trebuie sa il oprim pe celelalte
+        # Asteptam pana inchide utilizatorul tot browserul (nu doar primul tab).
         try:
-            page.goto("https://www.instagram.com/accounts/login/", timeout=PAGE_TIMEOUT)
-        except Exception:
-            pass
-        # Asteptam pana inchide utilizatorul fereastra.
-        try:
-            page.wait_for_event("close", timeout=0)
+            context.wait_for_event("close", timeout=0)
         except Exception:
             pass
         try:

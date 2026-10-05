@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 import re
-from datetime import timedelta
+from datetime import date, timedelta
 from difflib import SequenceMatcher
 
 from . import db, weeks
@@ -712,3 +712,222 @@ def dashboard(week: str | None = None, client_id: int | None = None,
         "overdue": overdue,
         "clients": sorted(clients_out.values(), key=lambda c: c["name"].lower()),
     }
+
+
+# --------------------------------------------------------------------------- statistici
+
+STAT_RANGES = ("week", "month", "all")
+TREND_WEEKS = 8
+TOP_POSTS = 5
+
+
+def _interactions(metrics: dict) -> int:
+    """Aprecieri + comentarii + distribuiri. Vizualizarile nu intra: sunt alta scara
+    (un video are de zeci de ori mai multe vizualizari decat interactiuni)."""
+    return sum(int(metrics.get(key) or 0) for key in ("likes", "comments", "shares")
+               if isinstance(metrics.get(key), (int, float)))
+
+
+def _sum_metric(rows: list[dict], key: str) -> int | None:
+    """Suma unei metrici; None daca nicio postare nu o are (ex. vizualizari pe poze) -
+    asa interfata arata "-" in loc de un 0 mincinos."""
+    values = [row["metrics"][key] for row in rows
+              if isinstance(row["metrics"].get(key), (int, float))]
+    return int(sum(values)) if values else None
+
+
+def _summarize(rows: list[dict]) -> dict:
+    total = sum(row["interactions"] for row in rows)
+    return {
+        "posts": len(rows),
+        "materials": len({row["content_group"] or f"p{row['id']}" for row in rows}),
+        "views": _sum_metric(rows, "views"),
+        "likes": _sum_metric(rows, "likes"),
+        "comments": _sum_metric(rows, "comments"),
+        "shares": _sum_metric(rows, "shares"),
+        "interactions": total,
+        "avg_interactions": round(total / len(rows), 1) if rows else 0,
+    }
+
+
+def _stat_rows(client_id: int | None, where: str = "", params: tuple = ()) -> list[dict]:
+    sql = ("SELECT p.*, a.platform, a.handle, a.client_id, c.name AS client_name "
+           "FROM posts p JOIN accounts a ON a.id = p.account_id "
+           "JOIN clients c ON c.id = a.client_id "
+           "WHERE p.status = 'posted' AND a.active = 1 AND c.active = 1")
+    values: list = []
+    if client_id:
+        sql += " AND a.client_id = ?"
+        values.append(int(client_id))
+    if where:
+        sql += f" AND {where}"
+        values.extend(params)
+    rows = db.query(sql, tuple(values))
+    for row in rows:
+        row["metrics"] = db.load_metrics(row["metrics"])
+        row["interactions"] = _interactions(row["metrics"])
+    return rows
+
+
+def _change(current: int | float, previous: int | float) -> float | None:
+    """Variatia procentuala fata de perioada anterioara; None daca nu are sens."""
+    if not previous:
+        return None
+    return round((current - previous) / previous * 100, 1)
+
+
+def stats(week: str | None = None, range_: str = "month",
+          client_id: int | None = None) -> dict:
+    """Statistici despre postarile publicate, pe saptamana, luna sau tot istoricul."""
+    week = week if week and weeks.is_week(week) else weeks.current_week()
+    range_ = range_ if range_ in STAT_RANGES else "month"
+    month = weeks.month_of_week(week)
+
+    if range_ == "week":
+        rows = _stat_rows(client_id, "p.week = ?", (week,))
+        previous = _stat_rows(client_id, "p.week = ?", (weeks.shift_week(week, -1),))
+        label = weeks.week_label(week)
+    elif range_ == "month":
+        rows = _stat_rows(client_id, "p.month = ?", (month,))
+        previous = _stat_rows(client_id, "p.month = ?", (weeks.shift_month(month, -1),))
+        label = weeks.month_label(month)
+    else:
+        rows, previous, label = _stat_rows(client_id), [], "tot istoricul"
+
+    # O perioada care nu s-a terminat inca nu se compara cu una completa: 5 zile din
+    # octombrie vs. tot septembrie ar arata o "scadere" care nu exista.
+    if range_ == "week":
+        period_end = weeks.week_bounds(week)[1]
+    elif range_ == "month":
+        period_end = weeks.month_bounds(month)[1]
+    else:
+        period_end = None
+    in_progress = period_end is not None and period_end >= date.today()
+
+    summary = _summarize(rows)
+    before = _summarize(previous)
+    comparable = bool(previous) and not in_progress
+    summary["posts_change"] = _change(summary["posts"], before["posts"]) if comparable else None
+    summary["interactions_change"] = (
+        _change(summary["interactions"], before["interactions"]) if comparable else None)
+    summary["in_progress"] = in_progress
+
+    by_platform = []
+    for platform in PLATFORMS:
+        subset = [row for row in rows if row["platform"] == platform]
+        if subset:
+            by_platform.append({"platform": platform, "label": PLATFORM_LABELS[platform],
+                                **_summarize(subset)})
+
+    by_type = []
+    for content_type in POST_CONTENT_TYPES:
+        subset = [row for row in rows if row["content_type"] == content_type]
+        if subset:
+            by_type.append({"content_type": content_type,
+                            "label": CONTENT_LABELS[content_type], **_summarize(subset)})
+
+    ranked = sorted(rows, key=lambda row: (row["interactions"], row["posted_at"]),
+                    reverse=True)[:TOP_POSTS]
+    top_posts = [{
+        "id": row["id"], "title": row["title"] or (row["caption"] or "")[:60] or "(fara titlu)",
+        "platform": row["platform"], "platform_label": PLATFORM_LABELS[row["platform"]],
+        "handle": row["handle"], "content_label": CONTENT_LABELS[row["content_type"]],
+        "posted_at": row["posted_at"], "url": row["url"], "thumb_url": row["thumb_url"],
+        "metrics": row["metrics"], "interactions": row["interactions"],
+    } for row in ranked if row["interactions"] > 0 or row["metrics"]]
+
+    # Evolutia pe ultimele saptamani, mereu terminata la saptamana aleasa.
+    trend_weeks = [weeks.shift_week(week, offset) for offset in range(-(TREND_WEEKS - 1), 1)]
+    placeholders = ",".join("?" * len(trend_weeks))
+    trend_rows = _stat_rows(client_id, f"p.week IN ({placeholders})", tuple(trend_weeks))
+    trend = []
+    for key in trend_weeks:
+        subset = [row for row in trend_rows if row["week"] == key]
+        trend.append({"week": key, "label": weeks.short_week_label(key),
+                      "posts": len(subset),
+                      "interactions": sum(row["interactions"] for row in subset),
+                      "is_selected": key == week})
+
+    return {"week": week, "range": range_, "range_label": label, "summary": summary,
+            "by_platform": by_platform, "by_type": by_type, "top_posts": top_posts,
+            "trend": trend}
+
+
+# --------------------------------------------------------------------------- raport lunar
+
+def _week_state(rows: list[dict], monday: date, sunday: date, today: date) -> str:
+    if not rows:
+        return "none"
+    if sunday < today:
+        return "done" if all(row["done"] for row in rows) else "missed"
+    return "in_progress" if monday <= today else "upcoming"
+
+
+def _month_materials(client_id: int, month: str) -> list[dict]:
+    """Materialele publicate intr-o luna: acelasi continut pe mai multe retele = unul,
+    cu un link catre fiecare postare. E "dovada livrarii" pentru client."""
+    rows = _stat_rows(client_id, "p.month = ?", (month,))
+    groups: dict[str, list[dict]] = {}
+    for row in sorted(rows, key=lambda r: r["posted_at"]):
+        groups.setdefault(row["content_group"] or f"p{row['id']}", []).append(row)
+    materials = []
+    for members in groups.values():
+        first = members[0]
+        seen: dict[str, dict] = {}
+        for row in members:
+            seen.setdefault(row["platform"], {
+                "platform": row["platform"], "label": PLATFORM_LABELS[row["platform"]],
+                "url": row["url"]})
+        materials.append({
+            "title": next((r["title"] for r in members if r["title"]),
+                          (first["caption"] or "")[:60] or "(fara titlu)"),
+            "content_type": first["content_type"],
+            "content_label": CONTENT_LABELS[first["content_type"]],
+            "posted_at": first["posted_at"],
+            "platforms": [seen[p] for p in PLATFORMS if p in seen],
+            "interactions": sum(r["interactions"] for r in members),
+        })
+    return materials
+
+
+def monthly_report(month: str | None = None, client_id: int | None = None,
+                   today: date | None = None) -> dict:
+    """Raportul unei luni calendaristice, pe client: obiectivele lunare, fiecare
+    saptamana a lunii fata de cota ei, si ce s-a livrat concret."""
+    today = today or date.today()
+    month = month if month and weeks.is_month(month) else weeks.current_month(today)
+    first, last = weeks.month_bounds(month)
+
+    clients = [c for c in list_clients() if c["active"]]
+    if client_id:
+        clients = [c for c in clients if c["id"] == int(client_id)]
+
+    report_clients = []
+    for client in clients:
+        goals = _build_rows({"month": month}, client_id=client["id"])
+        week_entries = []
+        for key in weeks.weeks_of_month(month):
+            monday, sunday = weeks.week_bounds(key)
+            rows = _build_rows({"week": key}, client_id=client["id"])
+            week_entries.append({
+                "week": key, "label": weeks.week_label(key), "rows": rows,
+                "state": _week_state(rows, monday, sunday, today)})
+        materials = _month_materials(client["id"], month)
+        if not goals and not materials and not any(w["rows"] for w in week_entries):
+            continue
+        finished = [w for w in week_entries if w["state"] in ("done", "missed")]
+        report_clients.append({
+            "id": client["id"], "name": client["name"], "goals": goals,
+            "weeks": week_entries, "materials": materials,
+            "summary": {
+                "weeks_finished": len(finished),
+                "weeks_done": sum(1 for w in finished if w["state"] == "done"),
+                "weeks_total": sum(1 for w in week_entries if w["state"] != "none"),
+                "goals_done": sum(1 for g in goals if g["done"]),
+                "goals_total": len(goals),
+                "materials": len(materials),
+            }})
+
+    return {"month": month, "month_label": weeks.month_label(month),
+            "range_label": weeks.month_range_label(month),
+            "in_progress": last >= today, "clients": report_clients}

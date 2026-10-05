@@ -35,19 +35,50 @@ Fara el, restul aplicatiei merge normal.
 
 ## Cum se foloseste
 
-**O data per client:** in Setari, lipesti linkurile paginilor lui si scrii
-planul din contract (ex. 4 postari/saptamana, 2-3 video/saptamana, 10 video/luna).
+**O data per client**, dintr-o singura comanda (creeaza clientul, conturile din linkuri
+si, daca vrei, planul din contract):
 
-**In fiecare zi/saptamana:** rulezi `python3 run.py --sync`. Postarile reale se
-trag singure de pe pagini, indiferent care dintre colegi le-a publicat.
+```bash
+python3 run.py --setup "Restaurant Central" \
+  https://www.instagram.com/restaurantcentralbistrita \
+  "https://www.facebook.com/profile.php?id=61588484789306" \
+  https://www.tiktok.com/@central.bistrita \
+  --contract-plan
+```
 
-**Cand vrei sa stii cum stai:** deschizi aplicatia. Dashboard-ul arata, pe
-client, cat din plan e realizat ("2/4 postari saptamana asta", "2/10 video luna
-asta") si cate zile mai sunt.
+`--contract-plan` pune planul unui pachet tipic: 4 postari/saptamana, 2-3 video/saptamana,
+10 video/luna. Il poti schimba oricand din Setari. Fara `--contract-plan`, planul il scrii
+tu acolo.
 
-Optional, cine vrea poate adauga din timp postari ca „planificat" (tab-ul
-**Postari** > „+ Postare noua"), iar sincronizarea le leaga automat de postarea
-reala cand apare - asa vezi si ce e in lucru, nu doar ce s-a publicat.
+**In fiecare zi sau saptamana:** `python3 run.py --sync`. Postarile reale se trag singure de
+pe pagini, indiferent care dintre colegi le-a publicat.
+
+**Ecranele aplicatiei** (`python3 run.py`):
+
+- **Dashboard** - cum stai saptamana asta fata de plan.
+- **Raport lunar** - pe luna calendaristica (1 - ultima zi): obiectivele lunare, fiecare
+  saptamana fata de cota ei, si lista materialelor livrate, cu linkuri catre fiecare
+  postare. Se printeaza sau se salveaza ca PDF (buton in dreapta sus), bun de trimis
+  clientului la final de luna. Navighezi intre luni cu sagetile.
+- **Statistici** - aprecieri, comentarii, distribuiri, vizualizari; evolutia pe
+  saptamani, pe platforma si pe tip de continut, si cele mai bune postari.
+- **Postari** - lista tuturor postarilor, cu adaugare si editare manuala.
+
+Optional, cine vrea poate adauga din timp postari ca „planificat" (tab-ul **Postari**), iar
+sincronizarea le leaga automat de postarea reala cand apare - asa vezi si ce e in lucru,
+nu doar ce s-a publicat.
+
+### Cum se masoara contractul
+
+Fiecare luna se socoteste separat, de pe 1 pana in ultima zi (1-30 septembrie, apoi 1-31
+octombrie etc.), iar cota lunara (ex. 10 video) se reseteaza pe 1.
+
+Cota saptamanala (ex. 4 postari) se masoara pe saptamani luni-duminica. O saptamana care
+trece dintr-o luna in alta (ex. 28 sept - 4 oct) se numara in luna in care cade **joia** ei
+(aici octombrie), ca fiecare saptamana sa apartina unei singure luni si cota sa nu se
+aplice de doua ori. Postarile din saptamana respectiva se numara toate, indiferent de
+luna in care au picat zilele. Daca vrei alta regula, e un singur loc de schimbat
+(`weeks_of_month` din `tracker/weeks.py`).
 
 ## Sincronizare automata (recomandat)
 
@@ -70,17 +101,20 @@ trebuie rulat in fiecare terminal nou, inainte de `python3 run.py ...` (ca sa
 gaseasca Playwright). Pe Mac si Linux nu exista de obicei comanda `pip` de sine
 statatoare - dupa activare apare.
 
-Ultima comanda deschide o fereastra de browser. Te loghezi in conturile de care
-ai nevoie (Instagram / Facebook / TikTok), inchizi fereastra, gata. Sesiunea
+Ultima comanda deschide un browser cu Instagram, Facebook si TikTok in cate un tab. Te
+loghezi in fiecare, inchizi fereastra, gata. Poti folosi **contul tau personal** - nu e
+nevoie sa fii administratorul paginilor, pentru ca aplicatia citeste doar ce e public. Singurul
+risc: o retea poate cere o verificare sau limita temporar un cont care face accesari
+automate; la cateva pagini pe zi, de obicei nu se intampla. Sesiunea
 ramane salvata in `data/browser-profile/`, exact ca intr-un Chrome obisnuit -
 parolele nu trec prin aplicatie si nu sunt salvate de ea.
 
 Daca ai deja Chrome instalat si nu vrei sa mai descarci unul, pune calea in
 `TRACKER_BROWSER_PATH` si sari peste `playwright install`.
 
-**Adaugarea unui client nou** dureaza cat dureaza sa lipesti niste linkuri:
-Setari > *Adauga conturi din link*, pui linkurile paginilor (cate unul pe linie),
-scrii numele clientului, gata. Platforma si numele contului se recunosc singure.
+**Adaugarea unui client nou** se poate face si din interfata: Setari > *Adauga conturi
+din link*, pui linkurile paginilor (cate unul pe linie) si scrii numele clientului.
+Platforma si numele contului se recunosc singure.
 
 **Sincronizarea:** butonul `Sincronizeaza` din dreptul fiecarui cont, sau dintr-o
 data pentru toate:
@@ -160,8 +194,8 @@ conturile lipsa se creeaza automat.
 run.py                     punct de pornire (python3 run.py)
 tracker/
   db.py                    schema SQLite
-  store.py                 logica de business + dashboard + reconciliere import
-  weeks.py                 saptamani ISO, parsare date din exporturi
+  store.py                 logica de business, dashboard, statistici, raport lunar
+  weeks.py                 saptamani ISO, luni, parsare date din exporturi
   server.py                server HTTP (stdlib) + rutele API
   sources/
     scraper/               sincronizare automata prin browserul tau

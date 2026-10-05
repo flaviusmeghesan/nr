@@ -27,6 +27,8 @@
     <select id="clientFilter" aria-label="Filtru client"><option value="">Toti clientii</option></select>
     <nav class="tabs">
       <button class="tab active" data-tab="dashboard">Dashboard</button>
+      <button class="tab" data-tab="report">Raport lunar</button>
+      <button class="tab" data-tab="stats">Statistici</button>
       <button class="tab" data-tab="posts">Postari</button>
       <button class="tab" data-tab="settings">Setari</button>
     </nav>
@@ -40,6 +42,62 @@
   <section id="view-dashboard" class="view">
     <div class="summary" id="summary"></div>
     <div id="dashboardBody"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ RAPORT LUNAR -->
+  <section id="view-report" class="view" hidden>
+    <div class="toolbar no-print">
+      <button class="icon" id="prevMonth" title="Luna trecuta">‹</button>
+      <strong id="reportMonthLabel" style="min-width:190px;text-align:center"></strong>
+      <button class="icon" id="nextMonth" title="Luna urmatoare">›</button>
+      <button class="chip" id="thisMonth">Luna curenta</button>
+      <span class="spacer"></span>
+      <button class="ghost" id="printReport">Printeaza / salveaza PDF</button>
+    </div>
+    <div id="reportBody"></div>
+  </section>
+
+  <!-- ------------------------------------------------------------ STATISTICI -->
+  <section id="view-stats" class="view" hidden>
+    <div class="toolbar">
+      <select id="statsRange" aria-label="Perioada">
+        <option value="week">Saptamana aleasa</option>
+        <option value="month" selected>Luna saptamanii alese</option>
+        <option value="all">Tot istoricul</option>
+      </select>
+      <span class="hint" id="statsRangeLabel" style="margin:0"></span>
+    </div>
+    <div class="summary" id="statsTiles"></div>
+
+    <article class="card viz" style="margin-bottom:14px">
+      <h2>Interactiuni pe saptamana</h2>
+      <p class="hint">Aprecieri + comentarii + distribuiri, ultimele 8 saptamani pana la
+        saptamana aleasa. Nu include vizualizarile.</p>
+      <div id="trendChart" class="chart-wrap"></div>
+      <details class="table-view">
+        <summary class="hint">Vezi ca tabel</summary>
+        <table class="plain" id="trendTable"></table>
+      </details>
+    </article>
+
+    <div class="cards" style="margin-bottom:14px">
+      <article class="card viz">
+        <h2>Pe platforma</h2>
+        <p class="hint">Interactiuni totale in perioada.</p>
+        <div id="platformBars"></div>
+      </article>
+      <article class="card viz">
+        <h2>Pe tip de continut</h2>
+        <p class="hint">Interactiuni medii pe postare.</p>
+        <div id="typeBars"></div>
+      </article>
+    </div>
+
+    <article class="card viz">
+      <h2>Cele mai bune postari</h2>
+      <p class="hint">Dupa interactiuni, in perioada aleasa.</p>
+      <div id="topPosts"></div>
+    </article>
   </section>
 
   <!-- ------------------------------------------------------------ POSTARI -->
@@ -224,6 +282,7 @@
   </form>
 </dialog>
 
+<div id="vizTip" class="viz-tip" role="status" hidden></div>
 <script src="app.js"></script>
 </body>
 </html>

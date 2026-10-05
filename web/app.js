@@ -10,6 +10,8 @@ const state = {
   allWeeks: false,
   importCsvText: "",    // continutul fisierului urcat pentru mapare, pastrat intre pasi
   importAccount: null,
+  statsRange: "month",
+  reportMonth: null,    // '2026-09'; null = luna curenta
 };
 
 const $ = (sel, root = document) => root.querySelector(sel);
@@ -86,6 +88,8 @@ function fillSelect(select, items, { keepFirst = false, value = "id", text = "na
 async function refreshAll() {
   renderWeekLabel();
   if (state.tab === "dashboard") await renderDashboard();
+  if (state.tab === "report") await renderReport();
+  if (state.tab === "stats") await renderStats();
   if (state.tab === "posts") await renderPosts();
   if (state.tab === "settings") await renderSettings();
 }
@@ -217,6 +221,295 @@ function renderAccountCard(account) {
       ${account.rows.map(renderGoalRow).join("")}
     </div>`;
 }
+
+
+
+// --------------------------------------------------------------------- raport lunar
+
+const MONTHS_FULL = ["ianuarie", "februarie", "martie", "aprilie", "mai", "iunie", "iulie",
+  "august", "septembrie", "octombrie", "noiembrie", "decembrie"];
+
+function shiftMonthKey(key, delta) {
+  const [y, m] = key.split("-").map(Number);
+  const index = y * 12 + (m - 1) + delta;
+  return `${Math.floor(index / 12)}-${String(index % 12 + 1).padStart(2, "0")}`;
+}
+const currentMonthKey = () => state.boot.today.slice(0, 7);
+
+function goalText(row) {
+  const target = row.is_range ? `${row.target_min}-${row.target_max}` : `${row.target_min}`;
+  return `${row.posted} din ${target}`;
+}
+
+function weekStateBadge(state_) {
+  return {
+    done: `<span class="badge done">✓ indeplinit</span>`,
+    missed: `<span class="badge missed">✗ neindeplinit</span>`,
+    in_progress: `<span class="badge live">● in desfasurare</span>`,
+    upcoming: `<span class="badge">urmeaza</span>`,
+    none: `<span class="badge">fara plan</span>`,
+  }[state_] || "";
+}
+
+function renderReportClient(client, inProgress, rangeLabel, monthLabel) {
+  const s = client.summary;
+  const goalsHtml = client.goals.length
+    ? client.goals.map(renderGoalRow).join("")
+    : `<div class="hint">Niciun obiectiv lunar setat pentru clientul asta.</div>`;
+
+  const weeksHtml = client.weeks.map((w) => `
+    <div class="weekrow">
+      <div><b>${esc(w.label)}</b></div>
+      <div class="chips-row">${w.rows.map((r) => `
+        <span class="mini ${r.done ? "ok" : (w.state === "in_progress" || w.state === "upcoming" ? "" : "bad")}">
+          <span class="mark">${r.done ? "✓" : (w.state === "in_progress" || w.state === "upcoming" ? "·" : "✗")}</span>
+          ${esc(r.label)}: <b>${esc(goalText(r))}</b></span>`).join("")}</div>
+      ${weekStateBadge(w.state)}
+    </div>`).join("");
+
+  const delivered = client.materials.length
+    ? client.materials.map((m) => `
+      <div class="item">
+        <span class="date">${esc((m.posted_at || "").slice(8, 10))}.${esc((m.posted_at || "").slice(5, 7))}</span>
+        <span class="t">${esc(m.title)}<small>${esc(m.content_label)}</small></span>
+        <span class="links">${m.platforms.map((p) => {
+          const link = safeUrl(p.url);
+          return link ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(p.label)}</a>`
+                      : `<span>${esc(p.label)}</span>`;
+        }).join("")}</span>
+      </div>`).join("")
+    : `<div class="hint">Nimic publicat in luna asta.</div>`;
+
+  return `
+    <article class="report-card">
+      <div style="display:flex;align-items:baseline;gap:10px;flex-wrap:wrap">
+        <h2>${esc(client.name)}</h2>
+        ${inProgress ? `<span class="badge live">● luna in desfasurare</span>` : ""}
+      </div>
+      <div class="range">${esc(rangeLabel)}</div>
+
+      <div class="report-summary">
+        <div><b>${s.goals_done}/${s.goals_total}</b><span class="l">obiective lunare indeplinite</span></div>
+        <div><b>${s.weeks_done}/${s.weeks_finished}</b><span class="l">saptamani incheiate indeplinite${
+          inProgress && s.weeks_total > s.weeks_finished ? ` (din ${s.weeks_total} in luna)` : ""}</span></div>
+        <div><b>${s.materials}</b><span class="l">materiale livrate</span></div>
+      </div>
+
+      <h3>Obiective lunare</h3>
+      ${goalsHtml}
+
+      <h3>Pe saptamani</h3>
+      <div>${weeksHtml}</div>
+
+      <h3>Livrat in ${esc(monthLabel)}</h3>
+      <div class="delivered">${delivered}</div>
+    </article>`;
+}
+
+async function renderReport() {
+  const month = state.reportMonth || currentMonthKey();
+  const qs = new URLSearchParams({ month });
+  if (state.clientId) qs.set("client_id", state.clientId);
+  const data = await guarded(() => api("GET", `/api/report?${qs}`));
+  $("#reportMonthLabel").textContent = data.month_label;
+  $("#thisMonth").classList.toggle("active", data.month === currentMonthKey());
+  $("#reportBody").innerHTML = data.clients.length
+    ? data.clients.map((c) => renderReportClient(c, data.in_progress, data.range_label, data.month_label)).join("")
+    : `<div class="empty">Nimic de raportat pentru ${esc(data.month_label)}. Seteaza planul clientului in Setari
+         sau ruleaza <code>python3 run.py --sync</code> ca sa aduci postarile.</div>`;
+}
+
+$("#prevMonth").addEventListener("click", () => {
+  state.reportMonth = shiftMonthKey(state.reportMonth || currentMonthKey(), -1); renderReport();
+});
+$("#nextMonth").addEventListener("click", () => {
+  state.reportMonth = shiftMonthKey(state.reportMonth || currentMonthKey(), 1); renderReport();
+});
+$("#thisMonth").addEventListener("click", () => { state.reportMonth = null; renderReport(); });
+$("#printReport").addEventListener("click", () => window.print());
+
+// --------------------------------------------------------------------- statistici
+
+const fmt = (n) => (n === null || n === undefined) ? "—" : Number(n).toLocaleString("ro-RO");
+const safeUrl = (u) => (/^https?:\/\//i.test(u || "") ? u : "");
+
+// Tooltip unic, construit cu textContent (etichetele vin din date scrapuite = neîncredere).
+function showTip(anchorOrFn, value, label) {
+  const anchor = typeof anchorOrFn === "function" ? anchorOrFn() : anchorOrFn;
+  const tip = $("#vizTip");
+  tip.replaceChildren();
+  const v = document.createElement("div"); v.className = "tv"; v.textContent = value;
+  const l = document.createElement("div"); l.className = "tl"; l.textContent = label;
+  tip.append(v, l);
+  tip.hidden = false;
+  const box = anchor.getBoundingClientRect ? anchor.getBoundingClientRect() : anchor;
+  const tw = tip.offsetWidth, th = tip.offsetHeight;
+  const left = Math.min(window.innerWidth - tw - 8, Math.max(8, box.left + box.width / 2 - tw / 2));
+  const top = box.top - th - 8 < 8 ? box.bottom + 8 : box.top - th - 8;
+  tip.style.left = `${left}px`; tip.style.top = `${top}px`;
+}
+const hideTip = () => { $("#vizTip").hidden = true; };
+function bindTip(el, value, label, anchor = el) {
+  el.addEventListener("pointerenter", () => showTip(anchor, value, label));
+  el.addEventListener("focus", () => showTip(anchor, value, label));
+  el.addEventListener("pointerleave", hideTip);
+  el.addEventListener("blur", hideTip);
+}
+
+// Pas "frumos" pe axa Y: 1/2/5 x 10^k, maxim ~4 diviziuni.
+function niceScale(max) {
+  if (max <= 0) return { top: 4, step: 1 };
+  const raw = max / 4, mag = Math.pow(10, Math.floor(Math.log10(raw)));
+  const step = [1, 2, 5, 10].map((m) => m * mag).find((s) => s >= raw);
+  return { top: Math.ceil(max / step) * step, step };
+}
+
+// Coloana cu varful rotunjit (4px) si baza dreapta, ca sa "creasca" dintr-o linie de baza.
+function columnPath(x, y, w, h, r = 4) {
+  if (h <= 0) return "";
+  r = Math.min(r, h, w / 2);
+  return `M${x},${y + h} L${x},${y + r} Q${x},${y} ${x + r},${y} L${x + w - r},${y} ` +
+         `Q${x + w},${y} ${x + w},${y + r} L${x + w},${y + h} Z`;
+}
+
+function renderTrend(trend) {
+  const wrap = $("#trendChart");
+  if (!trend.some((t) => t.interactions > 0 || t.posts > 0)) {
+    wrap.innerHTML = `<div class="empty">Nicio postare publicata in ultimele 8 saptamani.</div>`;
+    $("#trendTable").innerHTML = "";
+    return;
+  }
+  // Dimensiuni din latimea reala, ca textul sa ramana la marimea lui pe orice ecran.
+  const W = Math.max(300, Math.round(wrap.clientWidth || 720));
+  const H = Math.round(Math.min(280, Math.max(190, W * 0.26)));
+  const L = 44, R = 10, T = 18, B = 28;
+  const plotW = W - L - R, plotH = H - T - B;
+  const max = Math.max(...trend.map((t) => t.interactions));
+  const { top, step } = niceScale(max);
+  const band = plotW / trend.length, bw = Math.min(24, band * 0.55);
+  const y = (v) => T + plotH - (v / top) * plotH;
+
+  let grid = "";
+  for (let v = 0; v <= top; v += step) {
+    grid += `<line class="grid" x1="${L}" x2="${W - R}" y1="${y(v)}" y2="${y(v)}"/>` +
+            `<text class="tick" x="${L - 8}" y="${y(v) + 4}" text-anchor="end">${fmt(v)}</text>`;
+  }
+  const maxIndex = trend.findIndex((t) => t.interactions === max);
+  let marks = "";
+  trend.forEach((t, i) => {
+    const x = L + i * band + (band - bw) / 2;
+    const h = (t.interactions / top) * plotH;
+    const showLabel = band >= 46 || i % 2 === (trend.length - 1) % 2;  // pe ecrane inguste, o eticheta din doua
+    const label = (t.is_selected || i === maxIndex) && t.interactions > 0
+      ? `<text class="value-label" x="${x + bw / 2}" y="${y(t.interactions) - 6}">${fmt(t.interactions)}</text>` : "";
+    marks += `<rect class="hit" data-i="${i}" x="${L + i * band}" y="${T}" width="${band}" height="${plotH}" tabindex="0" role="img" ` +
+             `aria-label="${esc(t.label)}: ${t.interactions} interactiuni, ${t.posts} postari"/>` +
+             `<path class="bar${t.is_selected ? "" : " dim"}" d="${columnPath(x, y(t.interactions), bw, h)}" pointer-events="none"/>` +
+             `${label}${showLabel ? `<text class="tick" x="${L + i * band + band / 2}" y="${H - 8}" text-anchor="middle">${esc(t.label)}</text>` : ""}`;
+  });
+  state.lastTrend = trend;
+  wrap.innerHTML = `<svg viewBox="0 0 ${W} ${H}" role="group" aria-label="Interactiuni pe saptamana">${grid}${marks}</svg>`;
+  $$(".hit", wrap).forEach((el) => {
+    const t = trend[Number(el.dataset.i)];
+    const bar = el.nextElementSibling;
+    bindTip(el, `${fmt(t.interactions)} interactiuni`, `Saptamana din ${t.label} · ${t.posts} postari`,
+      () => (t.interactions > 0 ? bar : el).getBoundingClientRect());
+  });
+
+  $("#trendTable").innerHTML =
+    `<thead><tr><th>Saptamana</th><th>Postari</th><th>Interactiuni</th></tr></thead><tbody>` +
+    trend.map((t) => `<tr><td>${esc(t.label)}</td><td>${t.posts}</td><td>${fmt(t.interactions)}</td></tr>`).join("") +
+    `</tbody>`;
+}
+
+function renderHBars(target, rows, valueKey, unitLabel) {
+  if (!rows.length) { target.innerHTML = `<div class="hint">Nu sunt date in perioada asta.</div>`; return; }
+  const max = Math.max(...rows.map((r) => r[valueKey]), 1);
+  target.className = "hbars";
+  target.innerHTML = rows.map((r, i) => `
+    <div class="row" data-i="${i}" tabindex="0">
+      <div class="name">${esc(r.label)}</div>
+      <div class="track"><div class="fill" style="width:${Math.max(1, (r[valueKey] / max) * 100)}%"></div>
+        <span class="num">${fmt(r[valueKey])} <small>· ${r.posts} ${r.posts === 1 ? "postare" : "postari"}</small></span></div>
+    </div>`).join("");
+  $$(".row", target).forEach((el) => {
+    const r = rows[Number(el.dataset.i)];
+    const parts = [`${fmt(r.likes)} aprecieri`, `${fmt(r.comments)} comentarii`];
+    if (r.shares !== null) parts.push(`${fmt(r.shares)} distribuiri`);
+    if (r.views !== null) parts.push(`${fmt(r.views)} vizualizari`);
+    bindTip(el, `${fmt(r[valueKey])} ${unitLabel}`, `${r.label}: ${parts.join(" · ")}`);
+  });
+}
+
+function statTile(label, value, sub, { change = null, na = false } = {}) {
+  let subHtml = `<div class="sub-delta">${esc(sub || "")}</div>`;
+  if (change !== null && change !== undefined) {
+    const up = change >= 0;
+    subHtml = `<div class="sub-delta ${up ? "up" : "down"}">${up ? "▲" : "▼"} ${Math.abs(change)}% fata de perioada anterioara</div>`;
+  }
+  return `<div class="stat"><div class="k">${esc(label)}</div>
+    <div class="v ${na ? "na" : ""}">${na ? "—" : fmt(value)}</div>${subHtml}</div>`;
+}
+
+async function renderStats() {
+  const qs = new URLSearchParams({ week: state.week, range: state.statsRange });
+  if (state.clientId) qs.set("client_id", state.clientId);
+  const data = await guarded(() => api("GET", `/api/stats?${qs}`));
+  const s = data.summary;
+  $("#statsRange").value = state.statsRange;
+  $("#statsRangeLabel").textContent = data.range_label +
+    (s.in_progress ? " · perioada nu s-a terminat, deci nu o compar cu cea anterioara" : "");
+
+  if (!s.posts) {
+    $("#statsTiles").innerHTML = "";
+    ["trendChart", "platformBars", "typeBars", "topPosts"].forEach((id) => { $("#" + id).innerHTML = ""; });
+    $("#trendTable").innerHTML = "";
+    $("#topPosts").innerHTML = `<div class="empty">Nicio postare publicata in perioada asta.
+      Ruleaza <code>python3 run.py --sync</code> ca sa aduci postarile de pe pagini, sau schimba perioada.</div>`;
+    renderTrend(data.trend);
+    return;
+  }
+
+  $("#statsTiles").innerHTML = [
+    statTile("Postari", s.posts, `${s.materials} ${s.materials === 1 ? "material" : "materiale"} distincte`,
+      { change: s.posts_change }),
+    statTile("Interactiuni", s.interactions, `${fmt(s.avg_interactions)} in medie / postare`,
+      { change: s.interactions_change }),
+    statTile("Aprecieri", s.likes, "", { na: s.likes === null }),
+    statTile("Comentarii", s.comments, "", { na: s.comments === null }),
+    statTile("Distribuiri", s.shares, s.shares === null ? "indisponibil pe aceste retele" : "", { na: s.shares === null }),
+    statTile("Vizualizari", s.views, s.views === null ? "indisponibil" : "doar unde le afiseaza reteaua", { na: s.views === null }),
+  ].join("");
+
+  renderTrend(data.trend);
+  renderHBars($("#platformBars"), data.by_platform, "interactions", "interactiuni");
+  renderHBars($("#typeBars"), data.by_type, "avg_interactions", "interactiuni / postare");
+
+  $("#topPosts").className = "toplist";
+  $("#topPosts").innerHTML = data.top_posts.map((p, i) => {
+    const link = safeUrl(p.url), thumb = safeUrl(p.thumb_url);
+    const extra = [`${fmt(p.metrics.likes ?? 0)} aprecieri`, `${fmt(p.metrics.comments ?? 0)} comentarii`];
+    if (p.metrics.views != null) extra.push(`${fmt(p.metrics.views)} vizualizari`);
+    return `<div class="item">
+      <div class="rank">${i + 1}</div>
+      ${thumb ? `<img class="thumb" src="${esc(thumb)}" loading="lazy" alt="" referrerpolicy="no-referrer">` : `<div class="thumb">${p.content_label === "Video" ? "🎬" : "🖼️"}</div>`}
+      <div style="min-width:0"><div class="title">${link
+        ? `<a href="${esc(link)}" target="_blank" rel="noopener noreferrer">${esc(p.title)}</a>` : esc(p.title)}</div>
+        <div class="meta">${esc(p.platform_label)} · ${esc(p.content_label)} · ${esc((p.posted_at || "").slice(0, 10))}</div></div>
+      <div class="score"><b>${fmt(p.interactions)}</b><small>${esc(extra.join(" · "))}</small></div>
+    </div>`;
+  }).join("") || `<div class="hint">Nicio postare cu metrici in perioada asta.</div>`;
+}
+
+let resizeTimer;
+window.addEventListener("resize", () => {
+  clearTimeout(resizeTimer);
+  resizeTimer = setTimeout(() => {
+    if (state.tab === "stats" && state.lastTrend) renderTrend(state.lastTrend);
+  }, 150);
+});
+
+$("#statsRange").addEventListener("change", (e) => { state.statsRange = e.target.value; renderStats(); });
 
 // --------------------------------------------------------------------- postari
 

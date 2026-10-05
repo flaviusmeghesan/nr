@@ -209,3 +209,123 @@ details summary::-webkit-details-marker { color: var(--muted); }
 
 code { white-space: nowrap; font-size: 12px; background: var(--panel-2);
   padding: 1px 5px; border-radius: 5px; }
+
+
+/* ---------------------------------------------------------------- statistici (dataviz) */
+/* Dark e implicit in aplicatie, light vine din media query - la fel pentru culorile graficelor. */
+:root { --viz-1: #3987e5; --viz-grid: #2a2f3d; --viz-up: #37c98b; --viz-down: #f2555a; }
+@media (prefers-color-scheme: light) {
+  :root { --viz-1: #2a78d6; --viz-grid: #dfe3ec; --viz-up: #0f8a5f; --viz-down: #c8302f; }
+}
+
+.stat .sub-delta { font-size: 12px; margin-top: 2px; color: var(--muted); }
+.stat .sub-delta.up { color: var(--viz-up); }
+.stat .sub-delta.down { color: var(--viz-down); }
+.stat .v.na { color: var(--muted); }
+
+.chart-wrap { width: 100%; overflow: hidden; }
+.chart-wrap svg { width: 100%; height: auto; display: block; }
+.chart-wrap .grid { stroke: var(--viz-grid); stroke-width: 1; }
+.chart-wrap .tick { fill: var(--muted); font-size: 11px; }
+.chart-wrap .bar { fill: var(--viz-1); }
+.chart-wrap .bar.dim { opacity: .45; }
+.chart-wrap .hit { fill: transparent; cursor: pointer; }
+.chart-wrap .hit:hover + .bar, .chart-wrap .hit:focus + .bar { filter: brightness(1.15); }
+.chart-wrap .hit:focus { outline: none; }
+.chart-wrap .value-label { fill: var(--text); font-size: 11px; font-weight: 600; text-anchor: middle; }
+
+.hbars .row { display: grid; grid-template-columns: 96px 1fr; gap: 10px; align-items: center;
+  padding: 5px 0; }
+.hbars .name { font-size: 13.5px; }
+.hbars .track { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.hbars .fill { height: 16px; background: var(--viz-1); border-radius: 0 4px 4px 0; min-width: 2px; }
+.hbars .num { font-size: 13px; font-variant-numeric: tabular-nums; white-space: nowrap; }
+.hbars .num small { color: var(--muted); }
+.hbars .row:hover .fill { filter: brightness(1.15); }
+
+.toplist .item { display: grid; grid-template-columns: 28px 44px 1fr auto; gap: 12px;
+  align-items: center; padding: 9px 0; border-top: 1px solid var(--line); }
+.toplist .item:first-child { border-top: none; }
+.toplist .rank { color: var(--muted); font-size: 13px; text-align: center;
+  font-variant-numeric: tabular-nums; }
+.toplist .thumb { width: 44px; height: 44px; border-radius: 8px; object-fit: cover;
+  background: var(--panel-2); display: grid; place-items: center; color: var(--muted); }
+.toplist .title { font-weight: 600; white-space: nowrap; overflow: hidden;
+  text-overflow: ellipsis; }
+.toplist .title a { color: inherit; text-decoration: none; }
+.toplist .title a:hover { text-decoration: underline; }
+.toplist .meta { color: var(--muted); font-size: 12.5px; }
+.toplist .score { text-align: right; font-variant-numeric: tabular-nums; }
+.toplist .score b { font-size: 16px; }
+.toplist .score small { display: block; color: var(--muted); font-size: 11.5px; }
+
+.viz-tip { position: fixed; z-index: 60; pointer-events: none; background: var(--panel);
+  border: 1px solid var(--line); border-radius: 9px; padding: 8px 11px; font-size: 12.5px;
+  box-shadow: 0 8px 24px rgba(0,0,0,.25); }
+.viz-tip .tv { font-size: 15px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.viz-tip .tl { color: var(--muted); }
+
+table.plain { width: 100%; border-collapse: collapse; font-size: 13px; margin-top: 8px; }
+table.plain th, table.plain td { text-align: left; padding: 5px 8px;
+  border-top: 1px solid var(--line); }
+table.plain th { color: var(--muted); font-weight: 500; }
+table.plain td:not(:first-child), table.plain th:not(:first-child) { text-align: right; }
+.table-view summary { cursor: pointer; margin-top: 6px; }
+
+@media (max-width: 720px) {
+  .hbars .row { grid-template-columns: 76px 1fr; }
+  .toplist .item { grid-template-columns: 22px 1fr auto; }
+  .toplist .thumb { display: none; }
+}
+
+
+/* ---------------------------------------------------------------- raport lunar */
+.report-card { background: var(--panel); border: 1px solid var(--line);
+  border-radius: var(--radius); padding: 18px 20px; margin-bottom: 18px; }
+.report-card h2 { font-size: 18px; margin: 0; }
+.report-card .range { color: var(--muted); font-size: 13px; margin: 2px 0 14px; }
+.report-card h3 { margin: 18px 0 8px; }
+.badge { font-size: 11.5px; padding: 2px 9px; border-radius: 20px; background: var(--panel-2);
+  color: var(--muted); white-space: nowrap; }
+.badge.done { background: #37c98b22; color: var(--viz-up); }
+.badge.missed { background: #f2555a22; color: var(--viz-down); }
+.badge.live { background: #5b8cff22; color: var(--accent); }
+
+.weekrow { display: grid; grid-template-columns: 170px 1fr auto; gap: 12px; align-items: center;
+  padding: 9px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.weekrow:first-of-type { border-top: none; }
+.weekrow .chips-row { display: flex; flex-wrap: wrap; gap: 6px 14px; }
+.weekrow .mini b { font-variant-numeric: tabular-nums; }
+.weekrow .mini .mark { display: inline-block; width: 1.1em; }
+.weekrow .mini.ok .mark { color: var(--viz-up); }
+.weekrow .mini.bad .mark { color: var(--viz-down); }
+
+.delivered .item { display: grid; grid-template-columns: 78px 1fr auto; gap: 12px; align-items: baseline;
+  padding: 8px 0; border-top: 1px solid var(--line); font-size: 13.5px; }
+.delivered .item:first-child { border-top: none; }
+.delivered .date { color: var(--muted); font-variant-numeric: tabular-nums; }
+.delivered .t { font-weight: 600; }
+.delivered .t small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+.delivered .links { display: flex; gap: 8px; flex-wrap: wrap; justify-content: flex-end; }
+.delivered .links a { color: var(--accent); text-decoration: none; font-size: 12.5px; }
+.delivered .links a:hover { text-decoration: underline; }
+.delivered .links span { color: var(--muted); font-size: 12.5px; }
+.report-summary { display: flex; gap: 22px; flex-wrap: wrap; margin: 4px 0 6px; font-size: 13.5px; }
+.report-summary b { font-size: 17px; font-variant-numeric: tabular-nums; }
+.report-summary span.l { color: var(--muted); display: block; font-size: 12px; }
+
+@media (max-width: 720px) {
+  .weekrow { grid-template-columns: 1fr; gap: 4px; }
+  .delivered .item { grid-template-columns: 1fr; gap: 2px; }
+  .delivered .links { justify-content: flex-start; }
+}
+
+/* La printare: doar raportul, fara bara de sus si butoane. */
+@media print {
+  .topbar, .no-print, .toast, .viz-tip { display: none !important; }
+  body { background: #fff; color: #000; }
+  main { max-width: none; padding: 0; }
+  .report-card { break-inside: avoid; border-color: #ccc; box-shadow: none; background: #fff; }
+  .view[hidden] { display: none !important; }
+  .delivered .links a { color: #000; }
+}

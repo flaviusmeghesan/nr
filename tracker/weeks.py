@@ -144,3 +144,54 @@ def month_of_week(week: str) -> str:
     """Luna in care cade majoritatea saptamanii (dupa ziua de joi, ca la ISO)."""
     monday, _ = week_bounds(week)
     return month_of(monday + timedelta(days=3))
+
+
+def shift_month(month: str, delta: int) -> str:
+    """Luna de peste `delta` luni ('2026-01', -1 -> '2025-12')."""
+    match = MONTH_RE.match(month or "")
+    if not match:
+        raise ValueError(f"luna invalida: {month!r}")
+    index = int(match.group(1)) * 12 + (int(match.group(2)) - 1) + delta
+    return f"{index // 12:04d}-{index % 12 + 1:02d}"
+
+
+def short_week_label(week: str) -> str:
+    """'2026-W41' -> '5 oct' (ziua de luni a saptamanii), pentru axe de grafic."""
+    monday, _ = week_bounds(week)
+    months = ["ian", "feb", "mar", "apr", "mai", "iun",
+              "iul", "aug", "sep", "oct", "nov", "dec"]
+    return f"{monday.day} {months[monday.month - 1]}"
+
+
+def month_bounds(month: str) -> tuple[date, date]:
+    """Prima si ultima zi a lunii ('2026-10' -> 1 oct, 31 oct)."""
+    match = MONTH_RE.match(month or "")
+    if not match:
+        raise ValueError(f"luna invalida: {month!r}")
+    first = date(int(match.group(1)), int(match.group(2)), 1)
+    nxt = shift_month(month, 1)
+    return first, date(int(nxt[:4]), int(nxt[5:7]), 1) - timedelta(days=1)
+
+
+def weeks_of_month(month: str) -> list[str]:
+    """Saptamanile ISO care apartin unei luni, dupa regula zilei de joi: o saptamana
+    (luni-duminica) se numara in luna in care cade joia ei, ca la standardul ISO.
+
+    Asa fiecare saptamana apartine exact unei luni, iar cota "4 postari/saptamana"
+    nu se aplica de doua ori pentru o saptamana care trece dintr-o luna in alta.
+    """
+    first, last = month_bounds(month)
+    day = first - timedelta(days=first.weekday())
+    found = []
+    while day <= last:
+        key = week_of(day)
+        if month_of_week(key) == month:
+            found.append(key)
+        day += timedelta(days=7)
+    return found
+
+
+def month_range_label(month: str) -> str:
+    """'2026-09' -> '1 - 30 septembrie 2026'."""
+    first, last = month_bounds(month)
+    return f"{first.day} - {last.day} {month_label(month)}"
