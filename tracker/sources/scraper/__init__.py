@@ -51,13 +51,15 @@ def parse_profile_url(url: str) -> dict | None:
     return None
 
 
-def sync_account(account: dict, limit: int = 50, headless: bool = True) -> dict:
+def sync_account(account: dict, limit: int = 50, headless: bool = True,
+                 scrolls: int | None = None) -> dict:
     """Trage postarile publicate de pe profilul contului si le scrie in aplicatie."""
     platform = account.get("platform", "")
     handle = account.get("handle", "")
 
     try:
-        payloads, _html, debug_folder = fetch_payloads(platform, handle, headless=headless)
+        extra = {"scrolls": scrolls} if scrolls else {}
+        payloads, _html, debug_folder = fetch_payloads(platform, handle, headless=headless, **extra)
     except ScraperUnavailable as exc:
         return _result(False, str(exc))
     except ScrapeFailed as exc:

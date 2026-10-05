@@ -53,6 +53,10 @@ tu acolo.
 **In fiecare zi sau saptamana:** `python3 run.py --sync`. Postarile reale se trag singure de
 pe pagini, indiferent care dintre colegi le-a publicat.
 
+Implicit se deruleaza pagina de 4 ori, deci vin doar postarile recente. **Prima data**, ca sa
+aduci tot istoricul de la inceputul contractului, ruleaza o sincronizare mai adanca:
+`python3 run.py --sync --scrolls 25`. Dupa aceea, cea obisnuita ajunge.
+
 **Ecranele aplicatiei** (`python3 run.py`):
 
 - **Dashboard** - cum stai saptamana asta fata de plan.

@@ -12,7 +12,7 @@ face reconcilierea cu ce era deja planificat.
 from . import csvfile, graph, internal_csv, scraper  # noqa: F401
 
 
-def run(account: dict, limit: int = 50) -> dict:
+def run(account: dict, limit: int = 50, scrolls: int | None = None) -> dict:
     """Sincronizeaza un cont, alegand cea mai buna sursa disponibila.
 
     Preferam scraperul prin browser (merge pe orice cont, fara aprobari). Daca
@@ -22,7 +22,7 @@ def run(account: dict, limit: int = 50) -> dict:
     available, _hint = scraper.is_available()
 
     if available:
-        return scraper.sync_account(account, limit=limit)
+        return scraper.sync_account(account, limit=limit, scrolls=scrolls)
 
     if platform in ("instagram", "facebook") and account.get("access_token"):
         return graph.sync_account(account, limit=limit)

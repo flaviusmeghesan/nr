@@ -135,7 +135,7 @@ def do_login() -> int:
     return 0
 
 
-def do_sync() -> int:
+def do_sync(scrolls: int | None = None) -> int:
     """Sincronizeaza toate conturile active si scrie un rezumat in terminal."""
     accounts = [a for a in store.list_accounts() if a.get("active")]
     if not accounts:
@@ -151,7 +151,7 @@ def do_sync() -> int:
     for account in accounts:
         label = f"{account['client_name']} · {account['platform_label']} {account['handle']}"
         print(f"  {label} ... ", end="", flush=True)
-        result = sources.run(account)
+        result = sources.run(account, limit=300 if scrolls else 50, scrolls=scrolls)
         if result["ok"]:
             print(f"{result['created']} noi, {result['updated']} actualizate, "
                   f"{result['linked_planned']} legate de plan")
@@ -173,6 +173,9 @@ def main(argv: list[str] | None = None) -> int:
                         help="creeaza un client din linkuri: --setup \"Nume\" link1 link2 ...")
     parser.add_argument("--contract-plan", action="store_true",
                         help="cu --setup: aplica planul (4/sapt., 2-3 video/sapt., 10 video/luna)")
+    parser.add_argument("--scrolls", type=int, metavar="N",
+                        help="cu --sync: de cate ori derulam pagina (implicit 4). Mai mult = "
+                             "postari mai vechi; pentru istoric foloseste ex. --scrolls 25")
     parser.add_argument("--sync", action="store_true",
                         help="sincronizeaza toate conturile acum, fara sa porneasca serverul")
     args = parser.parse_args(argv)
@@ -185,7 +188,7 @@ def main(argv: list[str] | None = None) -> int:
     if args.login:
         return do_login()
     if args.sync:
-        return do_sync()
+        return do_sync(args.scrolls)
 
     try:
         httpd = server.serve(args.host, args.port)
