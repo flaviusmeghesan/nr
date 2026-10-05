@@ -58,10 +58,17 @@ pagina. Nu ai de configurat conturi, token-uri sau aprobari.
 **Pasul unic de pornire:**
 
 ```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 pip install playwright
 playwright install chromium
 python3 run.py --login
 ```
+
+Comenzile cu `.venv` se fac o singura data. In schimb, `source .venv/bin/activate`
+trebuie rulat in fiecare terminal nou, inainte de `python3 run.py ...` (ca sa
+gaseasca Playwright). Pe Mac si Linux nu exista de obicei comanda `pip` de sine
+statatoare - dupa activare apare.
 
 Ultima comanda deschide o fereastra de browser. Te loghezi in conturile de care
 ai nevoie (Instagram / Facebook / TikTok), inchizi fereastra, gata. Sesiunea

@@ -65,9 +65,14 @@ def is_available() -> tuple[bool, str]:
     try:
         from playwright.sync_api import sync_playwright  # noqa: F401
     except ImportError:
-        return False, ("Playwright nu e instalat. Ruleaza:\n"
+        return False, ("Playwright nu e instalat. In folderul proiectului ruleaza:\n"
+                       "    python3 -m venv .venv\n"
+                       "    source .venv/bin/activate      "
+                       "(pe Windows: .venv\\Scripts\\activate)\n"
                        "    pip install playwright\n"
-                       "    playwright install chromium")
+                       "    playwright install chromium\n"
+                       "Dupa asta porneste aplicatia din acelasi terminal. Daca deschizi "
+                       "un terminal nou, ruleaza din nou comanda `source .venv/bin/activate`.")
     return True, ""
 
 
